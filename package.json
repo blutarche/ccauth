@@ -4,7 +4,7 @@
   "description": "Snapshot and switch between multiple Claude Code CLI account logins on macOS.",
   "type": "module",
   "bin": {
-    "ccauth": "./dist/cli.js"
+    "ccauth": "dist/cli.js"
   },
   "files": [
     "dist"
