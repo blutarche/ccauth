@@ -8,7 +8,7 @@
 <p align="center"><strong>No more.</strong></p>
 
 <p align="center">
-  <img src="assets/demo.gif" alt="ccauth switching accounts inside a live Claude Code session" width="800">
+  <img src="assets/demo.gif" alt="ccauth switching accounts inside a live Claude Code session" width="800"/>
 </p>
 
 ```
@@ -77,3 +77,9 @@ Integration test against the real Keychain (touches only `ccauth:__test__`): `CC
 ## License
 
 MIT
+
+---
+
+<p align="center">
+  <sub><i>Cuz there ain't no way I'm paying the extra usage rate buh.</i></sub>
+</p>
