@@ -1,0 +1,46 @@
+{
+  "name": "@blutarche/ccauth",
+  "version": "0.1.0",
+  "description": "Snapshot and switch between multiple Claude Code CLI account logins on macOS.",
+  "type": "module",
+  "bin": {
+    "ccauth": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/blutarche/ccauth.git"
+  },
+  "homepage": "https://github.com/blutarche/ccauth#readme",
+  "bugs": "https://github.com/blutarche/ccauth/issues",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "cli",
+    "keychain",
+    "account-switcher",
+    "profiles",
+    "macos"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "darwin"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepublishOnly": "npm run build && npm test",
+    "test": "vitest run",
+    "dev": "tsx src/cli.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0",
+    "tsx": "^4.16.0"
+  },
+  "license": "MIT"
+}
