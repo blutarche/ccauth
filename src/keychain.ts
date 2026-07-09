@@ -166,6 +166,6 @@ function keychainError(
         : "";
   return new CcauthError(
     `Keychain ${op} failed for "${service}"${detail ? `: ${detail}` : ""} ` +
-      `(exit ${exitStatus(err) ?? "?"}). Is the keychain locked? Nothing else was changed.`,
+      `(exit ${exitStatus(err) ?? "?"}). Is the keychain locked?`,
   );
 }
