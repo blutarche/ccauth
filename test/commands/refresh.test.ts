@@ -478,6 +478,45 @@ describe("refresh command", () => {
     expect(h.store.read(LIVE_SERVICE)).toBe(JSON.stringify(originalBlob));
   });
 
+  it("FIX D regression: two duplicate-active profiles share the original live blob; the first rotates, the second is a stale no-op rotate -> live ends on the ROTATED blob, not the dead original", async () => {
+    const h = createTestDeps();
+    const oldBlob = { claudeAiOauth: { accessToken: "OLD", refreshTokenExpiresAt: 111 } };
+    const newBlob = { claudeAiOauth: { accessToken: "NEW", refreshTokenExpiresAt: 222 } };
+    seedLive(h, oldBlob, { accountUuid: "p-1" });
+    // Both "a" and "b" were saved from the same login before either was ever
+    // refreshed, so they store the byte-identical OLD blob.
+    seedProfile(h, "a", oldBlob, {
+      accountUuid: "p-1",
+      oauthAccount: { accountUuid: "p-1" },
+    });
+    seedProfile(h, "b", oldBlob, {
+      accountUuid: "p-1",
+      oauthAccount: { accountUuid: "p-1" },
+    });
+
+    // Targets are visited sorted: "a" then "b". "a" (the first to consume
+    // the shared refresh token) rotates OLD -> NEW. "b" is handed OLD too
+    // (its own stored blob, still OLD at that point) but the refresh token
+    // was already consumed by "a", so claude uses the still-valid access
+    // token without rotating -- the live slot is left exactly as handed.
+    let call = 0;
+    h.runClaude.handler = () => {
+      call++;
+      if (call === 1) {
+        h.store.write(LIVE_SERVICE, JSON.stringify(newBlob));
+      }
+      // call === 2: no-op, live slot stays whatever it was swapped to.
+      return { code: 0, stdout: "pong", stderr: "", timedOut: false };
+    };
+
+    await refreshCommand(h.deps, {});
+
+    expect(h.runClaude.calls).toHaveLength(2);
+    // Must end on the valid rotated blob, not the dead OLD one.
+    expect(h.store.read(LIVE_SERVICE)).toBe(JSON.stringify(newBlob));
+    expect(h.store.read(LIVE_SERVICE)).not.toBe(JSON.stringify(oldBlob));
+  });
+
   it("FIX C: claude not on PATH -> refuses up front with zero swaps", async () => {
     const h = createTestDeps({ isClaudeInstalled: () => false });
     const originalBlob = { claudeAiOauth: { accessToken: "orig" } };

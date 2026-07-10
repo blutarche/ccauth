@@ -155,7 +155,18 @@ export async function refreshCommand(
       // must become the freshly re-captured (possibly rotated) blob --
       // restoring the stale pre-loop snapshot here would reinstate a token
       // Claude Code just rotated away, logging the user out.
-      if (isActive && rotatedBlob !== null) {
+      //
+      // Gate on `rotated`, not merely `rotatedBlob !== null`: if two saved
+      // profiles share the same original live blob (duplicate active), the
+      // first target to process rotates the shared refresh token and
+      // promotes restoreBlob to the new blob. The second duplicate is also
+      // `isActive` (still blob-equal to `originalBlob`) but its refresh
+      // token was already consumed by the first target, so Claude Code
+      // can't rotate it again -- `rotated` is false for it. Without this
+      // gate, that second no-op pass would downgrade restoreBlob back to
+      // the stale pre-rotation blob, and the final restore() would log the
+      // user out with a dead, already-rotated-away refresh token.
+      if (isActive && rotated) {
         restoreBlob = rotatedBlob;
       }
     }
