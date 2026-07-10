@@ -68,8 +68,13 @@ export async function refreshCommand(
   const restore = (): void => {
     if (restoreBlob !== null) {
       deps.store.write(deps.liveService, restoreBlob);
-      writeOauthAccount(deps, restoreAccount);
+    } else {
+      // No live credential existed before we started (user had no active
+      // login) -- return the slot to that original absent state, don't
+      // leave it holding the last-processed profile's credential.
+      deps.store.delete(deps.liveService);
     }
+    writeOauthAccount(deps, restoreAccount);
   };
 
   const onSignal = (): void => {

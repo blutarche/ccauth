@@ -55,8 +55,15 @@ function realIsClaudeRunning(): boolean {
   try {
     execFileSync("/usr/bin/pgrep", ["-x", "claude"], { stdio: "ignore" });
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    // pgrep's own documented exit code for "ran fine, no process matched" is
+    // 1 -- that's the only case that genuinely means "not running". Any
+    // other failure (couldn't exec pgrep, ENOENT, permission denied, exit
+    // >1, ...) means we don't actually know, so fail CLOSED: report running
+    // so `refresh` refuses without --force rather than silently swapping
+    // live credentials while a session might be active.
+    const status = (err as { status?: number | null } | null)?.status;
+    return status !== 1;
   }
 }
 

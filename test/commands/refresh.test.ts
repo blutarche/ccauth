@@ -314,4 +314,36 @@ describe("refresh command", () => {
 
     exitSpy.mockRestore();
   });
+
+  it("no live credential at start: restore deletes the live slot (not left on the last profile) and restores the original identity", async () => {
+    const h = createTestDeps();
+    // No store.write for LIVE_SERVICE -- originalBlob reads as null (no
+    // live credential existed before the run). oauthAccount is set but
+    // matches no saved profile.
+    const originalAccount = { email: "someone@nomatch.com", accountUuid: "no-match-1" };
+    h.fs.files.set(
+      TEST_PATHS.claudeConfigPath,
+      JSON.stringify({ oauthAccount: originalAccount, unrelated: "keep" }),
+    );
+
+    seedProfile(h, "a", { claudeAiOauth: { accessToken: "a" } }, {
+      accountUuid: "a-1",
+      oauthAccount: { accountUuid: "a-1" },
+    });
+    seedProfile(h, "b", { claudeAiOauth: { accessToken: "b" } }, {
+      accountUuid: "b-1",
+      oauthAccount: { accountUuid: "b-1" },
+    });
+
+    h.runClaude.handler = () => ({ code: 0, stdout: "pong", stderr: "", timedOut: false });
+
+    await refreshCommand(h.deps, {});
+
+    expect(h.runClaude.calls).toHaveLength(2);
+    // Live slot returned to its original absent state -- not left holding
+    // the last-processed profile's ("b") credential.
+    expect(h.store.read(LIVE_SERVICE)).toBeNull();
+    const config = JSON.parse(h.fs.files.get(TEST_PATHS.claudeConfigPath)!);
+    expect(config.oauthAccount).toEqual(originalAccount);
+  });
 });
