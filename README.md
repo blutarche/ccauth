@@ -36,20 +36,23 @@ $ ccauth save personal
 Saved profile "personal".
 
 $ ccauth list
-NAME        EMAIL              ORG        SAVED
-* personal  me@gmail.com       -          just now
-  work      me@company.com     Acme Inc   2 hours ago
+NAME        EMAIL              ORG        SAVED        EXPIRES
+* personal  me@gmail.com       -          just now     in 29 days
+  work      me@company.com     Acme Inc   2 hours ago  in 3 days ⚠
 
 $ ccauth use work
 Switched to profile "work".
 ```
 
+`EXPIRES` counts down each profile's refresh token (`⚠` when it's about to lapse, `expired` once it has). A lapsed profile needs a fresh `claude` `/login`; `ccauth refresh` warms the others without one.
+
 | Command                       | What it does                                              |
 | ----------------------------- | --------------------------------------------------------- |
 | `ccauth save [name]`          | Snapshot the live login (name defaults to email slug)     |
 | `ccauth use <name>`           | Switch the live login to a saved profile                  |
-| `ccauth list` / `ls`          | List profiles; `*` = active, `--all` includes `_autosave` |
+| `ccauth list` / `ls`          | List profiles + refresh-token expiry; `*` = active, `--all` includes `_autosave` |
 | `ccauth current`              | Show the active account and matching profile              |
+| `ccauth refresh [name]`       | Warm a profile's token via `claude` (all profiles if no name; `--force` past a running session) |
 | `ccauth rename <old> <new>`   | Rename a profile                                          |
 | `ccauth remove <name>` / `rm` | Delete a profile (`-y` skips the prompt)                  |
 
@@ -61,7 +64,8 @@ Details that matter:
 
 - `use` auto-snapshots the current login to `_autosave` first, so a switch is always undoable: `ccauth use _autosave`.
 - The `~/.claude.json` swap is atomic, with a one-time `.bak` on first write.
-- Tokens are moved as opaque blobs — never refreshed, decoded, or sent anywhere. Expired profile? Claude Code refreshes it on next launch, same as always.
+- Tokens are moved as opaque blobs — `ccauth` itself never decodes them or touches the network. Expired profile? Claude Code refreshes it on next launch, same as always.
+- `ccauth refresh` warms a stored profile by swapping it live and running one throwaway `claude -p`, letting the genuine Claude Code client refresh and rotate its own token; `ccauth` re-captures the result and restores your original login. It can't extend a refresh token past its ~30-day login window — only a real `/login` resets that — so it's a "make a stale-but-not-dead profile just work" convenience, not a keep-alive.
 - Profiles are keyed by account *and* organization, so the same account in two orgs is two distinct profiles.
 - If `claude` is running during a switch, restart it — it caches credentials in memory.
 
