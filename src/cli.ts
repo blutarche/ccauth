@@ -10,6 +10,7 @@ import { listCommand } from "./commands/list.js";
 import { currentCommand } from "./commands/current.js";
 import { renameCommand } from "./commands/rename.js";
 import { removeCommand } from "./commands/remove.js";
+import { refreshCommand } from "./commands/refresh.js";
 
 const USAGE = `Usage: ccauth <command> [args]
 
@@ -22,11 +23,13 @@ Commands:
   current                Show the currently active account.
   rename <old> <new>      Rename a saved profile.
   remove <name>, rm       Delete a saved profile.
+  refresh [name]          Warm a saved profile's token (all profiles if omitted).
 
 Options:
   -y, --yes               Skip confirmation prompts.
   -h, --help              Show this help.
   -v, --version            Show the version.
+  --force                  Bypass the running-\`claude\` guard for \`refresh\`.
 `;
 
 interface ParsedArgs {
@@ -35,6 +38,7 @@ interface ParsedArgs {
   help: boolean;
   version: boolean;
   all: boolean;
+  force: boolean;
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -44,6 +48,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     help: false,
     version: false,
     all: false,
+    force: false,
   };
   for (const token of argv) {
     if (token === "-y" || token === "--yes") {
@@ -54,6 +59,8 @@ function parseArgs(argv: string[]): ParsedArgs {
       result.version = true;
     } else if (token === "-a" || token === "--all") {
       result.all = true;
+    } else if (token === "--force") {
+      result.force = true;
     } else {
       result.positional.push(token);
     }
@@ -120,6 +127,9 @@ async function main(): Promise<number> {
         return 1;
       }
       await removeCommand(deps, rest[0], { yes: args.yes });
+      return 0;
+    case "refresh":
+      await refreshCommand(deps, { name: rest[0], force: args.force });
       return 0;
     default:
       console.error(`Unknown command: "${command}"\n`);

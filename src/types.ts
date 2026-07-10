@@ -77,6 +77,17 @@ export interface Deps {
   confirm: (question: string) => Promise<boolean>;
   /** True if a `claude` process currently appears to be running. */
   isClaudeRunning: () => boolean;
+  /**
+   * Runs the `claude` binary with `args`, waiting up to `opts.timeoutMs`.
+   * Never throws: a non-zero exit, a spawn failure, or a timeout are all
+   * reported back via the return value (`code`/`timedOut`) rather than an
+   * exception, so callers (e.g. `refresh`) can loop over many profiles
+   * without a `try`/`catch` around every invocation.
+   */
+  runClaude: (
+    args: string[],
+    opts: { timeoutMs: number },
+  ) => { code: number | null; stdout: string; stderr: string; timedOut: boolean };
   /** Clock seam, defaults to `() => new Date()`. */
   now: () => Date;
   stdout: (line: string) => void;

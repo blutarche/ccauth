@@ -2,6 +2,7 @@ import type { Deps, Paths } from "../../src/types.js";
 import { LIVE_SERVICE } from "../../src/types.js";
 import { FakeCredentialStore } from "./fakeCredentialStore.js";
 import { FakeFileSystem } from "./fakeFs.js";
+import { FakeRunClaude } from "./fakeRunClaude.js";
 
 export const TEST_PATHS: Paths = {
   claudeConfigPath: "/home/tester/.claude.json",
@@ -14,6 +15,7 @@ export interface TestHarness {
   deps: Deps;
   store: FakeCredentialStore;
   fs: FakeFileSystem;
+  runClaude: FakeRunClaude;
   stdoutLines: string[];
   stderrLines: string[];
 }
@@ -23,6 +25,7 @@ export function createTestDeps(
 ): TestHarness {
   const store = new FakeCredentialStore();
   const fs = new FakeFileSystem();
+  const runClaude = new FakeRunClaude();
   const stdoutLines: string[] = [];
   const stderrLines: string[] = [];
 
@@ -33,11 +36,12 @@ export function createTestDeps(
     liveService: LIVE_SERVICE,
     confirm: async () => true,
     isClaudeRunning: () => false,
+    runClaude: runClaude.run,
     now: () => new Date("2026-07-10T12:00:00.000Z"),
     stdout: (line) => stdoutLines.push(line),
     stderr: (line) => stderrLines.push(line),
     ...overrides,
   };
 
-  return { deps, store, fs, stdoutLines, stderrLines };
+  return { deps, store, fs, runClaude, stdoutLines, stderrLines };
 }
