@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { humanizeAgo } from "../../src/util/humanize.js";
+import { humanizeAgo, humanizeUntil } from "../../src/util/humanize.js";
 
 describe("humanizeAgo", () => {
   const now = new Date("2026-07-10T12:00:00.000Z");
@@ -31,6 +31,40 @@ describe("humanizeAgo", () => {
   it("returns days", () => {
     expect(humanizeAgo(new Date("2026-07-05T12:00:00.000Z"), now)).toBe(
       "5 days ago",
+    );
+  });
+});
+
+describe("humanizeUntil", () => {
+  const now = new Date("2026-07-10T12:00:00.000Z");
+
+  it("returns days for a future date", () => {
+    expect(humanizeUntil(new Date("2026-08-05T12:00:00.000Z"), now)).toBe(
+      "in 26 days",
+    );
+  });
+
+  it("singularizes 1 day", () => {
+    expect(humanizeUntil(new Date("2026-07-11T12:00:00.000Z"), now)).toBe(
+      "in 1 day",
+    );
+  });
+
+  it("returns hours when under a day away", () => {
+    expect(humanizeUntil(new Date("2026-07-10T17:00:00.000Z"), now)).toBe(
+      "in 5 hours",
+    );
+  });
+
+  it("returns 'expired' when future equals from", () => {
+    expect(humanizeUntil(new Date("2026-07-10T12:00:00.000Z"), now)).toBe(
+      "expired",
+    );
+  });
+
+  it("returns 'expired' when future is in the past", () => {
+    expect(humanizeUntil(new Date("2026-07-01T12:00:00.000Z"), now)).toBe(
+      "expired",
     );
   });
 });

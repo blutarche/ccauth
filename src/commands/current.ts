@@ -2,6 +2,7 @@ import type { Deps } from "../types.js";
 import { readOauthAccount } from "../claudeConfig.js";
 import { readIndex } from "../profiles.js";
 import { extractDisplayFields, sameAccount } from "../util/identity.js";
+import { formatExpiryCell } from "../util/expiry.js";
 
 export async function currentCommand(deps: Deps): Promise<void> {
   const liveAccount = readOauthAccount(deps);
@@ -22,6 +23,10 @@ export async function currentCommand(deps: Deps): Promise<void> {
 
   if (match) {
     deps.stdout(`Matches saved profile: "${match[0]}"`);
+    const refreshTokenExpiresAt = match[1].refreshTokenExpiresAt;
+    if (refreshTokenExpiresAt !== undefined) {
+      deps.stdout(`Refresh token: ${formatExpiryCell(refreshTokenExpiresAt, deps.now())}`);
+    }
   } else {
     deps.stdout("Does not match any saved profile.");
   }

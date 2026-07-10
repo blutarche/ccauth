@@ -21,3 +21,28 @@ export function humanizeAgo(from: Date, to: Date): string {
   }
   return "just now";
 }
+
+/** Humanizes the delta between `from` and `future` as "in N unit(s)" / "expired". */
+export function humanizeUntil(future: Date, from: Date): string {
+  const deltaMs = future.getTime() - from.getTime();
+
+  if (deltaMs <= 0) return "expired";
+
+  const deltaSec = Math.floor(deltaMs / 1000);
+
+  const units: Array<[string, number]> = [
+    ["year", 60 * 60 * 24 * 365],
+    ["month", 60 * 60 * 24 * 30],
+    ["day", 60 * 60 * 24],
+    ["hour", 60 * 60],
+    ["minute", 60],
+  ];
+
+  for (const [label, secondsPerUnit] of units) {
+    const value = Math.floor(deltaSec / secondsPerUnit);
+    if (value >= 1) {
+      return `in ${value} ${label}${value === 1 ? "" : "s"}`;
+    }
+  }
+  return "in less than a minute";
+}

@@ -140,4 +140,54 @@ describe("list command", () => {
     // With --all it's a real data row, not the parenthetical hint.
     expect(stdoutLines.some((l) => /hidden/.test(l))).toBe(false);
   });
+
+  it("renders every EXPIRES state", async () => {
+    // now = 2026-07-10T12:00:00.000Z (see createTestDeps)
+    const { deps, fs, stdoutLines } = createTestDeps();
+    fs.files.set(TEST_PATHS.claudeConfigPath, "{}");
+    writeIndex(deps, {
+      version: 1,
+      profiles: {
+        unknown: {
+          email: "unknown@x.com",
+          org: undefined,
+          accountUuid: "u-1",
+          savedAt: "2026-07-10T11:00:00.000Z",
+          oauthAccount: { accountUuid: "u-1" },
+        },
+        expired: {
+          email: "expired@x.com",
+          org: undefined,
+          accountUuid: "e-1",
+          savedAt: "2026-07-10T11:00:00.000Z",
+          refreshTokenExpiresAt: new Date("2026-07-01T12:00:00.000Z").getTime(),
+          oauthAccount: { accountUuid: "e-1" },
+        },
+        dying: {
+          email: "dying@x.com",
+          org: undefined,
+          accountUuid: "d-1",
+          savedAt: "2026-07-10T11:00:00.000Z",
+          refreshTokenExpiresAt: new Date("2026-07-12T12:00:00.000Z").getTime(),
+          oauthAccount: { accountUuid: "d-1" },
+        },
+        healthy: {
+          email: "healthy@x.com",
+          org: undefined,
+          accountUuid: "h-1",
+          savedAt: "2026-07-10T11:00:00.000Z",
+          refreshTokenExpiresAt: new Date("2026-08-05T12:00:00.000Z").getTime(),
+          oauthAccount: { accountUuid: "h-1" },
+        },
+      },
+    });
+
+    await listCommand(deps);
+
+    expect(stdoutLines[0]).toMatch(/EXPIRES$/);
+    expect(stdoutLines.find((l) => l.includes("unknown@x.com"))).toMatch(/ -$/);
+    expect(stdoutLines.find((l) => l.includes("expired@x.com"))).toMatch(/expired$/);
+    expect(stdoutLines.find((l) => l.includes("dying@x.com"))).toMatch(/in 2 days ⚠$/);
+    expect(stdoutLines.find((l) => l.includes("healthy@x.com"))).toMatch(/in 26 days$/);
+  });
 });

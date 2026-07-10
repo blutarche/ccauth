@@ -4,6 +4,7 @@ import { readOauthAccount } from "../claudeConfig.js";
 import { readIndex } from "../profiles.js";
 import { sameAccount } from "../util/identity.js";
 import { humanizeAgo } from "../util/humanize.js";
+import { formatExpiryCell } from "../util/expiry.js";
 
 export async function listCommand(
   deps: Deps,
@@ -30,6 +31,7 @@ export async function listCommand(
       email: entry.email ?? "-",
       org: entry.org ?? "-",
       saved: humanizeAgo(new Date(entry.savedAt), now),
+      expires: formatExpiryCell(entry.refreshTokenExpiresAt, now),
     };
   });
 
@@ -37,13 +39,14 @@ export async function listCommand(
     name: Math.max(4, ...rows.map((r) => r.name.length)),
     email: Math.max(5, ...rows.map((r) => r.email.length)),
     org: Math.max(3, ...rows.map((r) => r.org.length)),
+    saved: Math.max(5, ...rows.map((r) => r.saved.length)),
   };
 
-  const header = `${pad("NAME", widths.name)}  ${pad("EMAIL", widths.email)}  ${pad("ORG", widths.org)}  SAVED`;
+  const header = `${pad("NAME", widths.name)}  ${pad("EMAIL", widths.email)}  ${pad("ORG", widths.org)}  ${pad("SAVED", widths.saved)}  EXPIRES`;
   deps.stdout(header);
   for (const row of rows) {
     deps.stdout(
-      `${pad(row.name, widths.name)}  ${pad(row.email, widths.email)}  ${pad(row.org, widths.org)}  ${row.saved}`,
+      `${pad(row.name, widths.name)}  ${pad(row.email, widths.email)}  ${pad(row.org, widths.org)}  ${pad(row.saved, widths.saved)}  ${row.expires}`,
     );
   }
 
