@@ -517,6 +517,87 @@ describe("refresh command", () => {
     expect(h.store.read(LIVE_SERVICE)).not.toBe(JSON.stringify(oldBlob));
   });
 
+  it("FIX E: index-write failure after a successful active rotation -> restore still writes the ROTATED blob, not the stale original", async () => {
+    const h = createTestDeps();
+    const oldBlob = { claudeAiOauth: { accessToken: "OLD", refreshTokenExpiresAt: 111 } };
+    const newBlob = { claudeAiOauth: { accessToken: "NEW", refreshTokenExpiresAt: 222 } };
+    seedLive(h, oldBlob, { accountUuid: "p-1" });
+    seedProfile(h, "work", oldBlob, {
+      accountUuid: "p-1",
+      oauthAccount: { accountUuid: "p-1" },
+    });
+
+    h.runClaude.handler = () => {
+      h.store.write(LIVE_SERVICE, JSON.stringify(newBlob));
+      return { code: 0, stdout: "pong", stderr: "", timedOut: false };
+    };
+
+    // writeIndex does writeFileSync(tmp) then renameSync(tmp, profiles.json)
+    // -- make just that rename (the fallible half of the atomic index
+    // write) throw, simulating a real filesystem failure. Other renameSync
+    // calls (e.g. the claude.json identity swap) must keep working, or
+    // restore() itself would throw for an unrelated reason.
+    const originalRenameSync = h.fs.renameSync.bind(h.fs);
+    const renameError = new Error("ENOSPC: simulated rename failure");
+    h.fs.renameSync = (oldPath: string, newPath: string) => {
+      if (newPath === TEST_PATHS.profilesIndexPath) {
+        throw renameError;
+      }
+      originalRenameSync(oldPath, newPath);
+    };
+
+    await expect(refreshCommand(h.deps, { name: "work" })).rejects.toThrow(renameError);
+
+    // Promotion of restoreBlob must have happened BEFORE the throwable
+    // writeIndex call -- the finally-restore ends live on the freshly
+    // rotated NEW blob, not the stale pre-loop OLD one, even though the
+    // index write itself failed.
+    expect(h.store.read(LIVE_SERVICE)).toBe(JSON.stringify(newBlob));
+    expect(h.store.read(LIVE_SERVICE)).not.toBe(JSON.stringify(oldBlob));
+  });
+
+  it("FIX F: a failed run that mutates live to an unrelated dead blob must never be promoted or persisted, even after another profile's successful rotation", async () => {
+    const h = createTestDeps();
+    const oldBlob = { claudeAiOauth: { accessToken: "OLD", refreshTokenExpiresAt: 111 } };
+    const newBlob = { claudeAiOauth: { accessToken: "NEW", refreshTokenExpiresAt: 222 } };
+    const deadBlob = { claudeAiOauth: { accessToken: "DEAD", refreshTokenExpiresAt: 0 } };
+    seedLive(h, oldBlob, { accountUuid: "p-1" });
+    // "a" and "b" both stored the same OLD blob; "a" is the active login.
+    seedProfile(h, "a", oldBlob, {
+      accountUuid: "p-1",
+      oauthAccount: { accountUuid: "p-1" },
+    });
+    seedProfile(h, "b", oldBlob, {
+      accountUuid: "b-1",
+      oauthAccount: { accountUuid: "b-1" },
+    });
+
+    let call = 0;
+    h.runClaude.handler = () => {
+      call++;
+      if (call === 1) {
+        // "a": succeeds and rotates OLD -> NEW; gets promoted (isActive).
+        h.store.write(LIVE_SERVICE, JSON.stringify(newBlob));
+        return { code: 0, stdout: "pong", stderr: "", timedOut: false };
+      }
+      // "b": fails, but still leaves a *different*, dead blob in the live
+      // slot -- e.g. a partial/garbage write from the failed invocation.
+      h.store.write(LIVE_SERVICE, JSON.stringify(deadBlob));
+      return { code: 1, stdout: "", stderr: "boom", timedOut: false };
+    };
+
+    await refreshCommand(h.deps, {});
+
+    expect(h.runClaude.calls).toHaveLength(2);
+    // "b"'s dead blob must never have been written into ccauth:b.
+    expect(h.store.read(profileService("b"))).toBe(JSON.stringify(oldBlob));
+    // restoreBlob must have stayed on "a"'s valid NEW rotation -- the dead
+    // blob from "b"'s failed run must never overwrite it as the restore
+    // source. Final live state is NEW, never DEAD.
+    expect(h.store.read(LIVE_SERVICE)).toBe(JSON.stringify(newBlob));
+    expect(h.store.read(LIVE_SERVICE)).not.toBe(JSON.stringify(deadBlob));
+  });
+
   it("FIX C: claude not on PATH -> refuses up front with zero swaps", async () => {
     const h = createTestDeps({ isClaudeInstalled: () => false });
     const originalBlob = { claudeAiOauth: { accessToken: "orig" } };

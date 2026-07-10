@@ -79,6 +79,17 @@ export async function refreshCommand(
     writeOauthAccount(deps, restoreAccount);
   };
 
+  // Known limitation: `deps.runClaude` shells out via execFileSync, so this
+  // command's body is synchronous end-to-end -- a real OS signal delivered
+  // while the `claude` child is running only gets dispatched to `onSignal`
+  // after that child returns (Node processes signals between synchronous
+  // ticks). In practice this handler and the `finally` below both restore
+  // from the same `restoreBlob`, so the common case (Ctrl-C) is still safe.
+  // A hard kill (SIGKILL, which can't be caught at all) leaves the live slot
+  // on whatever valid, re-captured profile was in flight -- never a dead
+  // token, per invariant 2 above -- and is recoverable with `ccauth use`. A
+  // full async-spawn refactor (see docs/plans/2026-07-10-ccauth-refresh-design.md
+  // §5) would let a signal interrupt mid-run, but is out of scope here.
   const onSignal = (): void => {
     restore();
     process.exit(130);
@@ -123,12 +134,54 @@ export async function refreshCommand(
         { timeoutMs: 120_000 },
       );
 
-      // Re-capture BEFORE moving on to the next target / before restore()
-      // runs -- see invariant 1 in the design doc. If we skipped this, a
-      // rotated live blob would be lost and `ccauth:P` would keep a dead,
-      // rotated-away refresh token.
+      // Re-capture whatever `claude` left in the live slot -- this may be a
+      // legitimately rotated blob, or (on a failed run) an unrelated dead
+      // blob the invocation happened to leave behind. `rotated` alone can't
+      // distinguish those two cases, so gate everything below on `succeeded`
+      // too: a failed run's live content must never be treated as a valid
+      // rotation, must never be persisted into the profile store, and must
+      // never become the restore source.
       const rotatedBlob = deps.store.read(deps.liveService);
-      if (rotatedBlob !== null) {
+      const rotated = rotatedBlob !== null && rotatedBlob !== blobP;
+      const succeeded = res.code === 0;
+
+      // Invariants (in order, both load-bearing):
+      //
+      // 1. Promotion of `restoreBlob` happens FIRST -- before `writeIndex`,
+      //    which does a fallible renameSync and can throw. If promotion ran
+      //    after writeIndex (as it used to), an index-write failure would
+      //    skip promotion entirely while `ccauth:<name>` (the profile store)
+      //    already holds the rotated blob -- the `finally` restore would
+      //    then reinstate the stale pre-loop blob into the live slot even
+      //    though the on-disk profile has moved on, logging the user out
+      //    with a dead refresh token. Promoting before the throwable call
+      //    means a real rotation is locked in as the restore source
+      //    atomically, regardless of what happens next.
+      //
+      // 2. Both persisting into the profile store AND promoting the restore
+      //    source are gated on `succeeded && rotated` -- a genuine
+      //    successful rotation. Without the `succeeded` gate, a failed run
+      //    (res.code !== 0) that happens to leave a *different* dead blob in
+      //    the live slot would satisfy `rotated` (rotatedBlob !== blobP) and
+      //    get promoted/persisted anyway, turning a dead blob into the
+      //    restore source or the on-disk profile. Gating on `rotated` (not
+      //    merely `isActive`) also matters for duplicate-active profiles: if
+      //    two saved profiles share the same original live blob, the first
+      //    to process consumes the shared refresh token and promotes; the
+      //    second is still `isActive` (blob-equal to `originalBlob`) but its
+      //    token was already consumed, so it's a no-op (`rotated` is false)
+      //    and correctly leaves `restoreBlob` alone rather than downgrading
+      //    it back to the stale pre-rotation blob.
+      //
+      // 3. On failure or no-rotation, `restoreBlob` is left exactly as it
+      //    was going into this iteration (the original, or an earlier
+      //    successful active promotion) -- the `finally` restore() then
+      //    overwrites whatever the failed/no-op run left in the live slot
+      //    with that known-good value.
+      if (succeeded && rotated) {
+        if (isActive) {
+          restoreBlob = rotatedBlob;
+        }
         deps.store.write(profileService(name), rotatedBlob);
         if (index.profiles[name]) {
           index.profiles[name] = {
@@ -139,36 +192,14 @@ export async function refreshCommand(
         }
       }
 
-      const rotated = rotatedBlob !== null && rotatedBlob !== blobP;
-      const status: Status =
-        res.code === 0
-          ? rotated
-            ? "refreshed"
-            : "valid"
-          : res.timedOut
-            ? "failed(timeout)"
-            : "failed";
+      const status: Status = succeeded
+        ? rotated
+          ? "refreshed"
+          : "valid"
+        : res.timedOut
+          ? "failed(timeout)"
+          : "failed";
       results.push({ name, status });
-
-      // Invariant 2: if the target we just refreshed IS the originally-
-      // active login (by blob equality, captured above), the restore source
-      // must become the freshly re-captured (possibly rotated) blob --
-      // restoring the stale pre-loop snapshot here would reinstate a token
-      // Claude Code just rotated away, logging the user out.
-      //
-      // Gate on `rotated`, not merely `rotatedBlob !== null`: if two saved
-      // profiles share the same original live blob (duplicate active), the
-      // first target to process rotates the shared refresh token and
-      // promotes restoreBlob to the new blob. The second duplicate is also
-      // `isActive` (still blob-equal to `originalBlob`) but its refresh
-      // token was already consumed by the first target, so Claude Code
-      // can't rotate it again -- `rotated` is false for it. Without this
-      // gate, that second no-op pass would downgrade restoreBlob back to
-      // the stale pre-rotation blob, and the final restore() would log the
-      // user out with a dead, already-rotated-away refresh token.
-      if (isActive && rotated) {
-        restoreBlob = rotatedBlob;
-      }
     }
   } finally {
     restore();
