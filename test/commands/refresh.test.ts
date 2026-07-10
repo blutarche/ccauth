@@ -556,46 +556,66 @@ describe("refresh command", () => {
     expect(h.store.read(LIVE_SERVICE)).not.toBe(JSON.stringify(oldBlob));
   });
 
-  it("FIX F: a failed run that mutates live to an unrelated dead blob must never be promoted or persisted, even after another profile's successful rotation", async () => {
+  it("ROUND-5 REGRESSION: claude refreshes the token successfully, then the trailing prompt fails -- the genuine rotation must still be promoted, persisted, and reported as refreshed (not lost to a stale restore)", async () => {
     const h = createTestDeps();
     const oldBlob = { claudeAiOauth: { accessToken: "OLD", refreshTokenExpiresAt: 111 } };
     const newBlob = { claudeAiOauth: { accessToken: "NEW", refreshTokenExpiresAt: 222 } };
-    const deadBlob = { claudeAiOauth: { accessToken: "DEAD", refreshTokenExpiresAt: 0 } };
     seedLive(h, oldBlob, { accountUuid: "p-1" });
-    // "a" and "b" both stored the same OLD blob; "a" is the active login.
-    seedProfile(h, "a", oldBlob, {
+    seedProfile(h, "work", oldBlob, {
       accountUuid: "p-1",
       oauthAccount: { accountUuid: "p-1" },
     });
-    seedProfile(h, "b", oldBlob, {
-      accountUuid: "b-1",
-      oauthAccount: { accountUuid: "b-1" },
-    });
 
-    let call = 0;
+    // `claude -p` rotates the OAuth token FIRST (writing the valid NEW blob
+    // to the live keychain), then runs the prompt -- which here fails/exits
+    // non-zero. The rotation itself is genuine and must not be discarded
+    // just because the trailing prompt step errored.
     h.runClaude.handler = () => {
-      call++;
-      if (call === 1) {
-        // "a": succeeds and rotates OLD -> NEW; gets promoted (isActive).
-        h.store.write(LIVE_SERVICE, JSON.stringify(newBlob));
-        return { code: 0, stdout: "pong", stderr: "", timedOut: false };
-      }
-      // "b": fails, but still leaves a *different*, dead blob in the live
-      // slot -- e.g. a partial/garbage write from the failed invocation.
-      h.store.write(LIVE_SERVICE, JSON.stringify(deadBlob));
+      h.store.write(LIVE_SERVICE, JSON.stringify(newBlob));
       return { code: 1, stdout: "", stderr: "boom", timedOut: false };
     };
 
-    await refreshCommand(h.deps, {});
+    await refreshCommand(h.deps, { name: "work" });
 
-    expect(h.runClaude.calls).toHaveLength(2);
-    // "b"'s dead blob must never have been written into ccauth:b.
-    expect(h.store.read(profileService("b"))).toBe(JSON.stringify(oldBlob));
-    // restoreBlob must have stayed on "a"'s valid NEW rotation -- the dead
-    // blob from "b"'s failed run must never overwrite it as the restore
-    // source. Final live state is NEW, never DEAD.
+    // Final live slot must hold the genuinely-rotated NEW blob, not the
+    // stale pre-loop OLD one -- restoring OLD here would log the user out,
+    // since claude already rotated its refresh token away from OLD.
     expect(h.store.read(LIVE_SERVICE)).toBe(JSON.stringify(newBlob));
-    expect(h.store.read(LIVE_SERVICE)).not.toBe(JSON.stringify(deadBlob));
+    expect(h.store.read(LIVE_SERVICE)).not.toBe(JSON.stringify(oldBlob));
+    // The rotation must be persisted into the profile store too.
+    expect(h.store.read(profileService("work"))).toBe(JSON.stringify(newBlob));
+    // Reported as "refreshed" -- the rotation succeeded even though the
+    // trivial prompt that followed it did not.
+    expect(h.stdoutLines.some((l) => /refreshed\s+1/.test(l))).toBe(true);
+  });
+
+  it("FIX F: a run that returns non-zero and leaves STRUCTURALLY INVALID garbage in the live slot must never be promoted or persisted -- structural validity, not exit code, is the safety gate", async () => {
+    const h = createTestDeps();
+    const originalBlob = { claudeAiOauth: { accessToken: "orig", refreshTokenExpiresAt: 111 } };
+    seedLive(h, originalBlob, { accountUuid: "p-1" });
+    seedProfile(h, "work", originalBlob, {
+      accountUuid: "p-1",
+      oauthAccount: { accountUuid: "p-1" },
+    });
+
+    h.runClaude.handler = () => {
+      // A failed invocation that happens to leave non-JSON garbage in the
+      // live slot -- e.g. a partial/corrupt write. Unlike a genuine
+      // rotation (which is always structurally valid, since Claude only
+      // mutates the live item by successfully rotating), this must never be
+      // treated as authoritative.
+      h.store.write(LIVE_SERVICE, "not-json");
+      return { code: 1, stdout: "", stderr: "boom", timedOut: false };
+    };
+
+    await refreshCommand(h.deps, { name: "work" });
+
+    // The garbage must never have been written into ccauth:work.
+    expect(h.store.read(profileService("work"))).toBe(JSON.stringify(originalBlob));
+    // Final live state is restored to the original, valid OLD blob -- never
+    // the garbage left by the failed run.
+    expect(h.store.read(LIVE_SERVICE)).toBe(JSON.stringify(originalBlob));
+    expect(h.store.read(LIVE_SERVICE)).not.toBe("not-json");
   });
 
   it("FIX C: claude not on PATH -> refuses up front with zero swaps", async () => {

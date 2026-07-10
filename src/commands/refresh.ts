@@ -134,16 +134,28 @@ export async function refreshCommand(
         { timeoutMs: 120_000 },
       );
 
-      // Re-capture whatever `claude` left in the live slot -- this may be a
-      // legitimately rotated blob, or (on a failed run) an unrelated dead
-      // blob the invocation happened to leave behind. `rotated` alone can't
-      // distinguish those two cases, so gate everything below on `succeeded`
-      // too: a failed run's live content must never be treated as a valid
-      // rotation, must never be persisted into the profile store, and must
-      // never become the restore source.
+      // Re-capture whatever `claude` left in the live slot. `claude -p`
+      // refreshes its OAuth token (if needed) BEFORE running the prompt, so
+      // a live blob that changed is a genuine, valid-by-construction
+      // rotation regardless of whether the prompt step that follows
+      // succeeds, fails, or times out -- Claude only ever mutates its own
+      // live keychain item by successfully rotating; a failed refresh writes
+      // nothing. `res.code`/`succeeded` therefore reflects the PROMPT
+      // result, not the AUTH result, and must not gate promotion. What can
+      // legitimately happen in the live slot after a run is only ever
+      // "unchanged" or "validly rotated" -- so the only defensive check
+      // needed here is structural validity, not exit status.
       const rotatedBlob = deps.store.read(deps.liveService);
       const rotated = rotatedBlob !== null && rotatedBlob !== blobP;
-      const succeeded = res.code === 0;
+      let rotatedValid = false;
+      if (rotated) {
+        try {
+          validateCredentialBlob(rotatedBlob!, name);
+          rotatedValid = true;
+        } catch {
+          rotatedValid = false;
+        }
+      }
 
       // Invariants (in order, both load-bearing):
       //
@@ -159,26 +171,28 @@ export async function refreshCommand(
       //    atomically, regardless of what happens next.
       //
       // 2. Both persisting into the profile store AND promoting the restore
-      //    source are gated on `succeeded && rotated` -- a genuine
-      //    successful rotation. Without the `succeeded` gate, a failed run
-      //    (res.code !== 0) that happens to leave a *different* dead blob in
-      //    the live slot would satisfy `rotated` (rotatedBlob !== blobP) and
-      //    get promoted/persisted anyway, turning a dead blob into the
-      //    restore source or the on-disk profile. Gating on `rotated` (not
-      //    merely `isActive`) also matters for duplicate-active profiles: if
-      //    two saved profiles share the same original live blob, the first
-      //    to process consumes the shared refresh token and promotes; the
-      //    second is still `isActive` (blob-equal to `originalBlob`) but its
-      //    token was already consumed, so it's a no-op (`rotated` is false)
-      //    and correctly leaves `restoreBlob` alone rather than downgrading
-      //    it back to the stale pre-rotation blob.
+      //    source are gated on `rotated && rotatedValid` -- NOT on
+      //    `succeeded`. Gating on exit code was the round-5 bug: a
+      //    successful refresh followed by a failing/timing-out prompt still
+      //    leaves the genuinely-rotated NEW blob live, and that rotation
+      //    must be promoted/persisted even though `res.code !== 0`. What
+      //    still must never be promoted is a live slot left holding
+      //    something structurally invalid -- `rotatedValid` catches that.
+      //    Gating on `rotated` (not merely `isActive`) also matters for
+      //    duplicate-active profiles: if two saved profiles share the same
+      //    original live blob, the first to process consumes the shared
+      //    refresh token and promotes; the second is still `isActive`
+      //    (blob-equal to `originalBlob`) but its token was already
+      //    consumed, so it's a no-op (`rotated` is false) and correctly
+      //    leaves `restoreBlob` alone rather than downgrading it back to the
+      //    stale pre-rotation blob.
       //
-      // 3. On failure or no-rotation, `restoreBlob` is left exactly as it
-      //    was going into this iteration (the original, or an earlier
-      //    successful active promotion) -- the `finally` restore() then
-      //    overwrites whatever the failed/no-op run left in the live slot
-      //    with that known-good value.
-      if (succeeded && rotated) {
+      // 3. On no-rotation or an invalid rotation, `restoreBlob` is left
+      //    exactly as it was going into this iteration (the original, or an
+      //    earlier successful active promotion) -- the `finally` restore()
+      //    then overwrites whatever the run left in the live slot with that
+      //    known-good value.
+      if (rotated && rotatedValid) {
         if (isActive) {
           restoreBlob = rotatedBlob;
         }
@@ -192,13 +206,16 @@ export async function refreshCommand(
         }
       }
 
-      const status: Status = succeeded
-        ? rotated
-          ? "refreshed"
-          : "valid"
-        : res.timedOut
-          ? "failed(timeout)"
-          : "failed";
+      // A rotation is the goal of this command -- report it as "refreshed"
+      // even if the trivial prompt that followed it errored out, since the
+      // rotation itself (the thing the user actually cares about) succeeded.
+      const status: Status = rotated
+        ? "refreshed"
+        : res.code === 0
+          ? "valid"
+          : res.timedOut
+            ? "failed(timeout)"
+            : "failed";
       results.push({ name, status });
     }
   } finally {
