@@ -4,6 +4,7 @@ import { readOauthAccount } from "../claudeConfig.js";
 import { readIndex, writeIndex } from "../profiles.js";
 import { validateName, slugify } from "../util/names.js";
 import { extractDisplayFields } from "../util/identity.js";
+import { parseOauthExpiry } from "../util/oauthBlob.js";
 
 export interface SaveOptions {
   name?: string;
@@ -59,6 +60,7 @@ export async function saveCommand(
     org: display.org,
     accountUuid: display.accountUuid,
     savedAt: deps.now().toISOString(),
+    refreshTokenExpiresAt: parseOauthExpiry(liveBlob).refreshTokenExpiresAt,
     oauthAccount: liveAccount,
   };
   writeIndex(deps, index);

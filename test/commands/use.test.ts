@@ -146,4 +146,25 @@ describe("use command", () => {
       accountUuid: "p-1",
     });
   });
+
+  it("caches refreshTokenExpiresAt from the live blob into the _autosave entry", async () => {
+    const { deps, store, fs } = createTestDeps();
+
+    const oldLiveBlob = {
+      claudeAiOauth: {
+        accessToken: "personal-token",
+        expiresAt: 1000,
+        refreshTokenExpiresAt: 987654321,
+      },
+    };
+    seed(deps, store, fs, oldLiveBlob, { email: "me@personal.com" });
+    store.write(profileService("work"), JSON.stringify({ claudeAiOauth: {} }));
+
+    await useCommand(deps, "work");
+
+    const index = readIndex(deps);
+    expect(index.profiles[AUTOSAVE_NAME]?.refreshTokenExpiresAt).toBe(
+      987654321,
+    );
+  });
 });

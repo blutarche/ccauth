@@ -45,6 +45,7 @@ export interface ProfileEntry {
   org: string | undefined;
   accountUuid: string | undefined;
   savedAt: string;
+  refreshTokenExpiresAt?: number; // ms epoch, cached from the credential blob at save time
   /**
    * The full, opaque `oauthAccount` object as it existed at save time.
    * `email`/`org`/`accountUuid` above are a display-friendly cache derived

@@ -153,6 +153,39 @@ describe("save command", () => {
     expect(index.profiles["anon"]?.email).toBeUndefined();
     expect(index.profiles["anon"]?.accountUuid).toBeUndefined();
   });
+
+  it("caches refreshTokenExpiresAt from the live blob into the index", async () => {
+    const { deps, store, fs } = createTestDeps();
+    seedLive(
+      fs,
+      store,
+      {
+        claudeAiOauth: {
+          accessToken: "abc",
+          expiresAt: 1000,
+          refreshTokenExpiresAt: 123456789,
+        },
+      },
+      { emailAddress: "me@work.com" },
+    );
+
+    await saveCommand(deps, { name: "work" });
+
+    const index = readIndex(deps);
+    expect(index.profiles["work"]?.refreshTokenExpiresAt).toBe(123456789);
+  });
+
+  it("leaves refreshTokenExpiresAt undefined when the blob lacks the field", async () => {
+    const { deps, store, fs } = createTestDeps();
+    seedLive(fs, store, { claudeAiOauth: { accessToken: "abc" } }, {
+      emailAddress: "me@work.com",
+    });
+
+    await saveCommand(deps, { name: "work" });
+
+    const index = readIndex(deps);
+    expect(index.profiles["work"]?.refreshTokenExpiresAt).toBeUndefined();
+  });
 });
 
 function fs_setEmptyConfig(deps: ReturnType<typeof createTestDeps>["deps"]) {

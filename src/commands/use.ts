@@ -5,6 +5,7 @@ import { readIndex, writeIndex } from "../profiles.js";
 import { validateName } from "../util/names.js";
 import { extractDisplayFields } from "../util/identity.js";
 import { validateCredentialBlob } from "../util/blob.js";
+import { parseOauthExpiry } from "../util/oauthBlob.js";
 
 export async function useCommand(deps: Deps, name: string): Promise<void> {
   validateName(name, { allowReserved: true });
@@ -38,6 +39,7 @@ export async function useCommand(deps: Deps, name: string): Promise<void> {
       org: display.org,
       accountUuid: display.accountUuid,
       savedAt: deps.now().toISOString(),
+      refreshTokenExpiresAt: parseOauthExpiry(liveBlob).refreshTokenExpiresAt,
       oauthAccount: liveAccount,
     };
     writeIndex(deps, index);
