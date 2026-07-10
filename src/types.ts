@@ -77,6 +77,8 @@ export interface Deps {
   confirm: (question: string) => Promise<boolean>;
   /** True if a `claude` process currently appears to be running. */
   isClaudeRunning: () => boolean;
+  /** True if the `claude` binary resolves on PATH. */
+  isClaudeInstalled: () => boolean;
   /**
    * Runs the `claude` binary with `args`, waiting up to `opts.timeoutMs`.
    * Never throws: a non-zero exit, a spawn failure, or a timeout are all

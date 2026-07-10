@@ -2,7 +2,7 @@ import type { Deps, OauthAccount } from "../types.js";
 import { AUTOSAVE_NAME, CcauthError, profileService } from "../types.js";
 import { readOauthAccount, writeOauthAccount } from "../claudeConfig.js";
 import { readIndex, writeIndex } from "../profiles.js";
-import { sameAccount } from "../util/identity.js";
+import { validateCredentialBlob } from "../util/blob.js";
 import { parseOauthExpiry } from "../util/oauthBlob.js";
 
 type Status = "refreshed" | "valid" | "failed" | "failed(timeout)" | "missing";
@@ -29,6 +29,12 @@ export async function refreshCommand(
     throw new CcauthError(
       "a claude session is running; refreshing swaps the live credential repeatedly " +
         "and could disrupt it. Re-run with --force to override.",
+    );
+  }
+
+  if (!deps.isClaudeInstalled()) {
+    throw new CcauthError(
+      "claude not found on PATH. Install Claude Code or ensure `claude` is on your PATH.",
     );
   }
 
@@ -61,10 +67,6 @@ export async function refreshCommand(
   let restoreBlob = originalBlob;
   let restoreAccount: OauthAccount | undefined = originalAccount;
 
-  const originallyActiveName = Object.keys(index.profiles).find((n) =>
-    sameAccount(index.profiles[n]?.oauthAccount, originalAccount),
-  );
-
   const restore = (): void => {
     if (restoreBlob !== null) {
       deps.store.write(deps.liveService, restoreBlob);
@@ -94,6 +96,24 @@ export async function refreshCommand(
         continue;
       }
       const entryP = index.profiles[name];
+
+      // BLOB equality, not identity metadata, is the "this target is the
+      // active login" signal -- captured before the swap. Identity metadata
+      // can be missing/undefined, or shared by two profiles (in which case
+      // `.find` would pick an arbitrary name); a blob is the actual live
+      // credential, so comparing it directly can't misfire that way.
+      const isActive = originalBlob !== null && blobP === originalBlob;
+
+      try {
+        validateCredentialBlob(blobP, name);
+      } catch {
+        // A corrupt stored profile must never be written into the live
+        // keychain slot. Record it as failed and move on -- one bad profile
+        // shouldn't abort refreshing the rest, and `continue` here still
+        // hits the loop's end, leaving `finally`'s restore() to run as usual.
+        results.push({ name, status: "failed" });
+        continue;
+      }
 
       deps.store.write(deps.liveService, blobP);
       writeOauthAccount(deps, entryP?.oauthAccount);
@@ -131,11 +151,11 @@ export async function refreshCommand(
       results.push({ name, status });
 
       // Invariant 2: if the target we just refreshed IS the originally-
-      // active profile, the restore source must become the freshly
-      // re-captured (possibly rotated) blob -- restoring the stale
-      // pre-loop snapshot here would reinstate a token Claude Code just
-      // rotated away, logging the user out.
-      if (name === originallyActiveName && rotatedBlob !== null) {
+      // active login (by blob equality, captured above), the restore source
+      // must become the freshly re-captured (possibly rotated) blob --
+      // restoring the stale pre-loop snapshot here would reinstate a token
+      // Claude Code just rotated away, logging the user out.
+      if (isActive && rotatedBlob !== null) {
         restoreBlob = rotatedBlob;
       }
     }

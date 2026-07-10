@@ -36,6 +36,7 @@ export function createTestDeps(
     liveService: LIVE_SERVICE,
     confirm: async () => true,
     isClaudeRunning: () => false,
+    isClaudeInstalled: () => true,
     runClaude: runClaude.run,
     now: () => new Date("2026-07-10T12:00:00.000Z"),
     stdout: (line) => stdoutLines.push(line),

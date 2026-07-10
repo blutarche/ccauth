@@ -346,4 +346,150 @@ describe("refresh command", () => {
     const config = JSON.parse(h.fs.files.get(TEST_PATHS.claudeConfigPath)!);
     expect(config.oauthAccount).toEqual(originalAccount);
   });
+
+  it("FIX A regression: active target shares its account with a second saved profile -> live ends on the ROTATED blob, not stale original", async () => {
+    const h = createTestDeps();
+    const personalBlob = { claudeAiOauth: { accessToken: "personal" } };
+    const sharedAccount = {
+      email: "me@personal.com",
+      accountUuid: "p-1",
+      organizationUuid: "org-1",
+    };
+    // The live blob IS profile "b"'s blob -- "b" is the actually-active
+    // target. "a" merely shares the same identity metadata, so the OLD
+    // `.find(sameAccount(...))` logic (which walks profiles in insertion
+    // order) picks "a" as "originallyActiveName" even though "a"'s blob was
+    // never live. That misdetection must no longer matter.
+    seedLive(h, personalBlob, sharedAccount);
+    seedProfile(h, "a", { claudeAiOauth: { accessToken: "a-stale" } }, {
+      accountUuid: "p-1",
+      oauthAccount: sharedAccount,
+    });
+    seedProfile(h, "b", personalBlob, {
+      accountUuid: "p-1",
+      oauthAccount: sharedAccount,
+    });
+
+    const rotatedBlob = {
+      claudeAiOauth: { accessToken: "personal-ROTATED", refreshTokenExpiresAt: 777 },
+    };
+    h.runClaude.handler = () => {
+      h.store.write(LIVE_SERVICE, JSON.stringify(rotatedBlob));
+      return { code: 0, stdout: "pong", stderr: "", timedOut: false };
+    };
+
+    await refreshCommand(h.deps, { name: "b" });
+
+    expect(h.store.read(LIVE_SERVICE)).toBe(JSON.stringify(rotatedBlob));
+    expect(h.store.read(LIVE_SERVICE)).not.toBe(JSON.stringify(personalBlob));
+  });
+
+  it("FIX A regression: active login has undefined oauthAccount identity but its blob matches a target -> live ends on the ROTATED blob", async () => {
+    const h = createTestDeps();
+    const sharedBlob = { claudeAiOauth: { accessToken: "shared" } };
+    // Live identity is undefined (readOauthAccount() -> undefined), so the
+    // OLD `sameAccount(target, undefined)` check can never match any
+    // profile, and the target is never promoted -- reproducing the logout
+    // bug even more directly than the "shared account" case.
+    seedLive(h, sharedBlob, undefined);
+    seedProfile(h, "t", sharedBlob, {
+      accountUuid: "t-1",
+      oauthAccount: { accountUuid: "t-1" },
+    });
+
+    const rotatedBlob = {
+      claudeAiOauth: { accessToken: "shared-ROTATED", refreshTokenExpiresAt: 888 },
+    };
+    h.runClaude.handler = () => {
+      h.store.write(LIVE_SERVICE, JSON.stringify(rotatedBlob));
+      return { code: 0, stdout: "pong", stderr: "", timedOut: false };
+    };
+
+    await refreshCommand(h.deps, { name: "t" });
+
+    expect(h.store.read(LIVE_SERVICE)).toBe(JSON.stringify(rotatedBlob));
+    expect(h.store.read(LIVE_SERVICE)).not.toBe(JSON.stringify(sharedBlob));
+  });
+
+  it("FIX A: no live credential at start but a stale account happens to identity-match a target -> restore DELETES the live slot, doesn't create a login", async () => {
+    const h = createTestDeps();
+    // No write to LIVE_SERVICE -- originalBlob reads as null. The leftover
+    // config identity happens to match target "b" by accountUuid/org, which
+    // would make the OLD sameAccount-based logic promote "b"'s rotated blob
+    // into the live slot on restore (fabricating a login that never
+    // existed). Blob-equality can't do that: originalBlob is null, so
+    // `isActive` is always false.
+    const staleAccount = { accountUuid: "b-1", organizationUuid: "org-b" };
+    h.fs.files.set(
+      TEST_PATHS.claudeConfigPath,
+      JSON.stringify({ oauthAccount: staleAccount, unrelated: "keep" }),
+    );
+    seedProfile(h, "b", { claudeAiOauth: { accessToken: "b" } }, {
+      accountUuid: "b-1",
+      oauthAccount: staleAccount,
+    });
+
+    h.runClaude.handler = () => {
+      h.store.write(LIVE_SERVICE, JSON.stringify({ claudeAiOauth: { accessToken: "R" } }));
+      return { code: 0, stdout: "pong", stderr: "", timedOut: false };
+    };
+
+    await refreshCommand(h.deps, { name: "b" });
+
+    expect(h.store.read(LIVE_SERVICE)).toBeNull();
+  });
+
+  it("FIX B: a target with a malformed stored blob is skipped as failed, never written to the live slot, and the loop continues", async () => {
+    const h = createTestDeps();
+    const originalBlob = { claudeAiOauth: { accessToken: "orig" } };
+    seedLive(h, originalBlob, { accountUuid: "p-1" });
+
+    seedIndexOnly(h, "bad", { accountUuid: "b-1", oauthAccount: { accountUuid: "b-1" } });
+    h.store.write(profileService("bad"), "not-json");
+
+    seedProfile(h, "good", { claudeAiOauth: { accessToken: "good" } }, {
+      accountUuid: "g-1",
+      oauthAccount: { accountUuid: "g-1" },
+    });
+
+    const liveValuesSeenDuringRun: (string | null)[] = [];
+    h.runClaude.handler = () => {
+      liveValuesSeenDuringRun.push(h.store.read(LIVE_SERVICE));
+      return { code: 0, stdout: "pong", stderr: "", timedOut: false };
+    };
+
+    await refreshCommand(h.deps, {});
+
+    // Only "good" ever reached runClaude -- "bad" was skipped before the
+    // live-slot write.
+    expect(h.runClaude.calls).toHaveLength(1);
+    expect(liveValuesSeenDuringRun).toEqual([JSON.stringify({
+      claudeAiOauth: { accessToken: "good" },
+    })]);
+    // The malformed blob was never written into the live slot at any point.
+    expect(liveValuesSeenDuringRun.every((v) => v !== "not-json")).toBe(true);
+
+    expect(h.stdoutLines.some((l) => /failed\s+1/.test(l))).toBe(true);
+    expect(
+      h.stdoutLines.some((l) => l.includes("ccauth use bad") && l.includes("/login")),
+    ).toBe(true);
+
+    // Restore ran and put the original back.
+    expect(h.store.read(LIVE_SERVICE)).toBe(JSON.stringify(originalBlob));
+  });
+
+  it("FIX C: claude not on PATH -> refuses up front with zero swaps", async () => {
+    const h = createTestDeps({ isClaudeInstalled: () => false });
+    const originalBlob = { claudeAiOauth: { accessToken: "orig" } };
+    seedLive(h, originalBlob, { accountUuid: "p-1" });
+    seedProfile(h, "work", { claudeAiOauth: { accessToken: "work" } }, {
+      accountUuid: "w-1",
+      oauthAccount: { accountUuid: "w-1" },
+    });
+
+    await expect(refreshCommand(h.deps, { name: "work" })).rejects.toThrow(CcauthError);
+
+    expect(h.runClaude.calls).toHaveLength(0);
+    expect(h.store.read(LIVE_SERVICE)).toBe(JSON.stringify(originalBlob));
+  });
 });

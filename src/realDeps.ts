@@ -67,6 +67,15 @@ function realIsClaudeRunning(): boolean {
   }
 }
 
+function realIsClaudeInstalled(): boolean {
+  try {
+    execFileSync("/usr/bin/which", ["claude"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function toStr(value: string | Buffer | undefined): string {
   if (value === undefined) return "";
   return typeof value === "string" ? value : value.toString("utf8");
@@ -115,6 +124,7 @@ export function buildRealDeps(): Deps {
     liveService: computeLiveServiceName(),
     confirm: realConfirm,
     isClaudeRunning: realIsClaudeRunning,
+    isClaudeInstalled: realIsClaudeInstalled,
     runClaude: realRunClaude,
     now: () => new Date(),
     stdout: (line: string) => {
