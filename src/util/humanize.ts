@@ -46,3 +46,26 @@ export function humanizeUntil(future: Date, from: Date): string {
   }
   return "in less than a minute";
 }
+
+/**
+ * Humanizes a future delta as a compact single unit: "45m", "2h", "3d".
+ * Sub-minute and non-positive deltas render "<1m" (readout path: a reset
+ * time already in the past is not worth a special case).
+ */
+export function humanizeCompact(future: Date, from: Date): string {
+  const deltaSec = Math.floor((future.getTime() - from.getTime()) / 1000);
+
+  const units: Array<[string, number]> = [
+    ["y", 60 * 60 * 24 * 365],
+    ["mo", 60 * 60 * 24 * 30],
+    ["d", 60 * 60 * 24],
+    ["h", 60 * 60],
+    ["m", 60],
+  ];
+
+  for (const [label, secondsPerUnit] of units) {
+    const value = Math.floor(deltaSec / secondsPerUnit);
+    if (value >= 1) return `${value}${label}`;
+  }
+  return "<1m";
+}

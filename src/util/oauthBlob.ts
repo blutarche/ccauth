@@ -3,10 +3,10 @@ export interface OauthExpiry {
   refreshTokenExpiresAt: number | undefined; // refresh token, ms epoch
 }
 
-const EMPTY: OauthExpiry = {
-  expiresAt: undefined,
-  refreshTokenExpiresAt: undefined,
-};
+export interface OauthAccessToken {
+  accessToken: string | undefined;
+  expiresAt: number | undefined; // ms epoch
+}
 
 /**
  * Reads `claudeAiOauth.{expiresAt,refreshTokenExpiresAt}` out of a stored
@@ -15,31 +15,45 @@ const EMPTY: OauthExpiry = {
  * fields all degrade silently to `undefined` rather than erroring.
  */
 export function parseOauthExpiry(blob: string): OauthExpiry {
+  const oauth = readClaudeAiOauth(blob);
+  return {
+    expiresAt: asFiniteNumber(oauth?.expiresAt),
+    refreshTokenExpiresAt: asFiniteNumber(oauth?.refreshTokenExpiresAt),
+  };
+}
+
+/**
+ * Reads `claudeAiOauth.{accessToken,expiresAt}` for the `list --usage`
+ * readout. Same never-throw contract as `parseOauthExpiry`.
+ */
+export function parseOauthAccessToken(blob: string): OauthAccessToken {
+  const oauth = readClaudeAiOauth(blob);
+  const token = oauth?.accessToken;
+  return {
+    accessToken: typeof token === "string" && token !== "" ? token : undefined,
+    expiresAt: asFiniteNumber(oauth?.expiresAt),
+  };
+}
+
+function readClaudeAiOauth(blob: string): Record<string, unknown> | undefined {
   let parsed: unknown;
   try {
     parsed = JSON.parse(blob);
   } catch {
-    return EMPTY;
+    return undefined;
   }
-
-  if (typeof parsed !== "object" || parsed === null || !("claudeAiOauth" in parsed)) {
-    return EMPTY;
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    !("claudeAiOauth" in parsed)
+  ) {
+    return undefined;
   }
-
   const oauth = (parsed as { claudeAiOauth: unknown }).claudeAiOauth;
   if (typeof oauth !== "object" || oauth === null) {
-    return EMPTY;
+    return undefined;
   }
-
-  const { expiresAt, refreshTokenExpiresAt } = oauth as {
-    expiresAt?: unknown;
-    refreshTokenExpiresAt?: unknown;
-  };
-
-  return {
-    expiresAt: asFiniteNumber(expiresAt),
-    refreshTokenExpiresAt: asFiniteNumber(refreshTokenExpiresAt),
-  };
+  return oauth as Record<string, unknown>;
 }
 
 function asFiniteNumber(value: unknown): number | undefined {
