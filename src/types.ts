@@ -35,6 +35,8 @@ export interface Paths {
   profilesIndexPath: string;
   /** `~/.claude/ccauth/claude.json.bak` */
   claudeConfigBackupPath: string;
+  /** `~/.claude/ccauth/claude-version.json` (1-day User-Agent version cache) */
+  claudeVersionCachePath: string;
 }
 
 /** Raw identity metadata as it appears in `oauthAccount`. Opaque on purpose. */

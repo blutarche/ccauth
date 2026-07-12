@@ -5,7 +5,7 @@ import * as readline from "node:readline/promises";
 import { execFileSync } from "node:child_process";
 import type { Deps, FileSystem, Paths } from "./types.js";
 import { KeychainCredentialStore, computeLiveServiceName } from "./keychain.js";
-import { realFetchUsage } from "./usage.js";
+import { realFetchUsage, resolveClaudeCodeVersion } from "./usage.js";
 
 class RealFileSystem implements FileSystem {
   existsSync(p: string): boolean {
@@ -36,6 +36,7 @@ export function buildRealPaths(): Paths {
     ccauthDir,
     profilesIndexPath: path.join(ccauthDir, "profiles.json"),
     claudeConfigBackupPath: path.join(ccauthDir, "claude.json.bak"),
+    claudeVersionCachePath: path.join(ccauthDir, "claude-version.json"),
   };
 }
 
@@ -118,17 +119,32 @@ function realRunClaude(
 }
 
 export function buildRealDeps(): Deps {
+  const fs = new RealFileSystem();
+  const paths = buildRealPaths();
+  const now = (): Date => new Date();
+  // Lazy + memoized: only usage fetches pay for version detection, the
+  // `claude --version` spawn happens at most once per process (and at most
+  // once per day across processes via the on-disk cache).
+  let userAgentMemo: string | undefined;
+  const userAgent = (): string =>
+    (userAgentMemo ??= `claude-code/${resolveClaudeCodeVersion({
+      fs,
+      paths,
+      runClaude: realRunClaude,
+      now,
+    })}`);
   return {
     store: new KeychainCredentialStore(),
-    fs: new RealFileSystem(),
-    paths: buildRealPaths(),
+    fs,
+    paths,
     liveService: computeLiveServiceName(),
     confirm: realConfirm,
     isClaudeRunning: realIsClaudeRunning,
     isClaudeInstalled: realIsClaudeInstalled,
     runClaude: realRunClaude,
-    fetchUsage: realFetchUsage,
-    now: () => new Date(),
+    fetchUsage: (accessToken: string) =>
+      realFetchUsage(accessToken, fetch, userAgent()),
+    now,
     stdout: (line: string) => {
       console.log(line);
     },
