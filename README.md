@@ -44,13 +44,13 @@ $ ccauth use work
 Switched to profile "work".
 ```
 
-`EXPIRES` counts down each profile's refresh token (`⚠` when it's about to lapse, `expired` once it has). A lapsed profile needs a fresh `claude` `/login`; `ccauth refresh` warms the others without one. `ccauth list --usage` adds remaining-quota columns (5-hour and weekly windows) fetched read-only from Anthropic's usage API; rows shown as `stale` need a `ccauth refresh` first.
+`EXPIRES` counts down each profile's refresh token (`⚠` when it's about to lapse, `expired` once it has). A lapsed profile needs a fresh `claude` `/login`; `ccauth refresh` warms the others without one. `ccauth list --usage` adds usage-quota columns (percent used of the 5-hour and weekly windows, matching Claude's own `/usage` display) fetched read-only from Anthropic's usage API; rows shown as `stale` need a `ccauth refresh` first.
 
 | Command                       | What it does                                              |
 | ----------------------------- | --------------------------------------------------------- |
 | `ccauth save [name]`          | Snapshot the live login (name defaults to email slug)     |
 | `ccauth use <name>`           | Switch the live login to a saved profile                  |
-| `ccauth list` / `ls`          | List profiles + refresh-token expiry; `*` = active, `--all` includes `_autosave`, `--usage` adds remaining quota (5h/weekly) |
+| `ccauth list` / `ls`          | List profiles + refresh-token expiry; `*` = active, `--all` includes `_autosave`, `--usage` adds usage quota (5h/weekly) |
 | `ccauth current`              | Show the active account and matching profile              |
 | `ccauth refresh [name]`       | Warm a profile's token via `claude` (all profiles if no name; `--force` past a running session) |
 | `ccauth rename <old> <new>`   | Rename a profile                                          |

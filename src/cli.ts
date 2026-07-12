@@ -20,7 +20,7 @@ Commands:
   use <name>             Switch the live Claude Code login to profile <name>.
                          Auto-snapshots the current live login as "_autosave" first.
   list, ls               List saved profiles (add --all to include "_autosave",
-                         --usage to add remaining-quota columns).
+                         --usage to add usage-quota columns).
   current                Show the currently active account.
   rename <old> <new>      Rename a saved profile.
   remove <name>, rm       Delete a saved profile.
@@ -30,7 +30,7 @@ Options:
   -y, --yes               Skip confirmation prompts.
   -h, --help              Show this help.
   -v, --version            Show the version.
-  -u, --usage             Show remaining usage quota (5h/weekly) for list.
+  -u, --usage             Show usage quota (percent used, 5h/weekly) for list.
   --force                  Bypass the running-\`claude\` guard for \`refresh\`.
 `;
 
