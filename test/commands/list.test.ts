@@ -209,7 +209,7 @@ describe("list --usage", () => {
     oauthAccount: { accountUuid: uuid, organizationUuid: `org-${uuid}` },
   });
 
-  it("renders remaining percent and reset horizon for fresh tokens", async () => {
+  it("renders used percent and reset horizon for fresh tokens", async () => {
     const { deps, fs, store, fetchUsage, stdoutLines } = createTestDeps();
     fs.files.set(TEST_PATHS.claudeConfigPath, "{}");
     writeIndex(deps, { version: 1, profiles: { work: entry("w@x.com", "w-1") } });
@@ -224,8 +224,8 @@ describe("list --usage", () => {
 
     expect(stdoutLines[0]).toMatch(/EXPIRES\s+5H\s+WEEK$/);
     const line = stdoutLines.find((l) => l.includes("work"));
-    expect(line).toMatch(/78% \(2h\)/);
-    expect(line).toMatch(/41% \(4d\)$/);
+    expect(line).toMatch(/22% \(2h\)/);
+    expect(line).toMatch(/59% \(4d\)$/);
   });
 
   it("keeps plain list identical: no usage columns, no fetches", async () => {
@@ -376,7 +376,7 @@ describe("list --usage", () => {
     );
   });
 
-  it("clamps out-of-range utilization to the 0-100% remaining range", async () => {
+  it("clamps out-of-range utilization to the 0-100% used range", async () => {
     const { deps, fs, store, fetchUsage, stdoutLines } = createTestDeps();
     fs.files.set(TEST_PATHS.claudeConfigPath, "{}");
     writeIndex(deps, { version: 1, profiles: { work: entry("w@x.com", "w-1") } });
@@ -389,6 +389,6 @@ describe("list --usage", () => {
 
     await listCommand(deps, { usage: true });
 
-    expect(stdoutLines.find((l) => l.includes("work"))).toMatch(/0%\s+100%$/);
+    expect(stdoutLines.find((l) => l.includes("work"))).toMatch(/100%\s+0%$/);
   });
 });
