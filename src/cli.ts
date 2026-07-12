@@ -19,7 +19,8 @@ Commands:
                          (defaults to a slug of the account email).
   use <name>             Switch the live Claude Code login to profile <name>.
                          Auto-snapshots the current live login as "_autosave" first.
-  list, ls               List saved profiles (add --all to include "_autosave").
+  list, ls               List saved profiles (add --all to include "_autosave",
+                         --usage to add remaining-quota columns).
   current                Show the currently active account.
   rename <old> <new>      Rename a saved profile.
   remove <name>, rm       Delete a saved profile.
@@ -29,6 +30,7 @@ Options:
   -y, --yes               Skip confirmation prompts.
   -h, --help              Show this help.
   -v, --version            Show the version.
+  -u, --usage             Show remaining usage quota (5h/weekly) for list.
   --force                  Bypass the running-\`claude\` guard for \`refresh\`.
 `;
 
@@ -38,6 +40,7 @@ interface ParsedArgs {
   help: boolean;
   version: boolean;
   all: boolean;
+  usage: boolean;
   force: boolean;
 }
 
@@ -48,6 +51,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     help: false,
     version: false,
     all: false,
+    usage: false,
     force: false,
   };
   for (const token of argv) {
@@ -59,6 +63,8 @@ function parseArgs(argv: string[]): ParsedArgs {
       result.version = true;
     } else if (token === "-a" || token === "--all") {
       result.all = true;
+    } else if (token === "-u" || token === "--usage") {
+      result.usage = true;
     } else if (token === "--force") {
       result.force = true;
     } else {
@@ -108,7 +114,7 @@ async function main(): Promise<number> {
       return 0;
     case "list":
     case "ls":
-      await listCommand(deps, { all: args.all });
+      await listCommand(deps, { all: args.all, usage: args.usage });
       return 0;
     case "current":
       await currentCommand(deps);

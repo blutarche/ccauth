@@ -44,13 +44,13 @@ $ ccauth use work
 Switched to profile "work".
 ```
 
-`EXPIRES` counts down each profile's refresh token (`⚠` when it's about to lapse, `expired` once it has). A lapsed profile needs a fresh `claude` `/login`; `ccauth refresh` warms the others without one.
+`EXPIRES` counts down each profile's refresh token (`⚠` when it's about to lapse, `expired` once it has). A lapsed profile needs a fresh `claude` `/login`; `ccauth refresh` warms the others without one. `ccauth list --usage` adds remaining-quota columns (5-hour and weekly windows) fetched read-only from Anthropic's usage API; rows shown as `stale` need a `ccauth refresh` first.
 
 | Command                       | What it does                                              |
 | ----------------------------- | --------------------------------------------------------- |
 | `ccauth save [name]`          | Snapshot the live login (name defaults to email slug)     |
 | `ccauth use <name>`           | Switch the live login to a saved profile                  |
-| `ccauth list` / `ls`          | List profiles + refresh-token expiry; `*` = active, `--all` includes `_autosave` |
+| `ccauth list` / `ls`          | List profiles + refresh-token expiry; `*` = active, `--all` includes `_autosave`, `--usage` adds remaining quota (5h/weekly) |
 | `ccauth current`              | Show the active account and matching profile              |
 | `ccauth refresh [name]`       | Warm a profile's token via `claude` (all profiles if no name; `--force` past a running session) |
 | `ccauth rename <old> <new>`   | Rename a profile                                          |
@@ -64,7 +64,7 @@ Details that matter:
 
 - `use` auto-snapshots the current login to `_autosave` first, so a switch is always undoable: `ccauth use _autosave`.
 - The `~/.claude.json` swap is atomic, with a one-time `.bak` on first write.
-- Tokens are moved as opaque blobs — `ccauth` itself never decodes them or touches the network. Expired profile? Claude Code refreshes it on next launch, same as always.
+- Tokens are moved as opaque blobs — `ccauth` itself never decodes them or touches the network. Expired profile? Claude Code refreshes it on next launch, same as always. The one exception: `ccauth list --usage` uses each stored access token for a single read-only usage query against Anthropic's API - nothing is written or refreshed.
 - `ccauth refresh` warms a stored profile by swapping it live and running one throwaway `claude -p`, letting the genuine Claude Code client refresh and rotate its own token; `ccauth` re-captures the result and restores your original login. It can't extend a refresh token past its ~30-day login window — only a real `/login` resets that — so it's a "make a stale-but-not-dead profile just work" convenience, not a keep-alive.
 - Profiles are keyed by account *and* organization, so the same account in two orgs is two distinct profiles.
 - If `claude` is running during a switch, restart it — it caches credentials in memory.
