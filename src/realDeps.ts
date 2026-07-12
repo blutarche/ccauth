@@ -5,6 +5,7 @@ import * as readline from "node:readline/promises";
 import { execFileSync } from "node:child_process";
 import type { Deps, FileSystem, Paths } from "./types.js";
 import { KeychainCredentialStore, computeLiveServiceName } from "./keychain.js";
+import { realFetchUsage } from "./usage.js";
 
 class RealFileSystem implements FileSystem {
   existsSync(p: string): boolean {
@@ -126,6 +127,7 @@ export function buildRealDeps(): Deps {
     isClaudeRunning: realIsClaudeRunning,
     isClaudeInstalled: realIsClaudeInstalled,
     runClaude: realRunClaude,
+    fetchUsage: realFetchUsage,
     now: () => new Date(),
     stdout: (line: string) => {
       console.log(line);

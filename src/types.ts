@@ -40,6 +40,24 @@ export interface Paths {
 /** Raw identity metadata as it appears in `oauthAccount`. Opaque on purpose. */
 export type OauthAccount = Record<string, unknown>;
 
+/** One window from the OAuth usage endpoint. `utilization` is percent used (0-100). */
+export interface UsageWindow {
+  utilization: number;
+  /** Window reset time, ms epoch, when the API provided one. */
+  resetsAt: number | undefined;
+}
+
+/**
+ * Result of fetching usage for one access token. This is a readout path, so
+ * implementations never throw/reject: auth failures, rate limits, timeouts
+ * and malformed responses all come back as a `kind` variant.
+ */
+export type UsageFetchResult =
+  | { kind: "ok"; fiveHour: UsageWindow | undefined; sevenDay: UsageWindow | undefined }
+  | { kind: "auth" } // 401: token expired or revoked server-side
+  | { kind: "limited" } // 429
+  | { kind: "error" }; // network / timeout / other non-200 / malformed body
+
 export interface ProfileEntry {
   email: string | undefined;
   org: string | undefined;
@@ -90,6 +108,8 @@ export interface Deps {
     args: string[],
     opts: { timeoutMs: number },
   ) => { code: number | null; stdout: string; stderr: string; timedOut: boolean };
+  /** Fetches usage quota from the Anthropic OAuth usage endpoint. Never rejects. */
+  fetchUsage: (accessToken: string) => Promise<UsageFetchResult>;
   /** Clock seam, defaults to `() => new Date()`. */
   now: () => Date;
   stdout: (line: string) => void;

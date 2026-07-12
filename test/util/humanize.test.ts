@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { humanizeAgo, humanizeUntil } from "../../src/util/humanize.js";
+import { humanizeAgo, humanizeUntil, humanizeCompact } from "../../src/util/humanize.js";
 
 describe("humanizeAgo", () => {
   const now = new Date("2026-07-10T12:00:00.000Z");
@@ -66,5 +66,29 @@ describe("humanizeUntil", () => {
     expect(humanizeUntil(new Date("2026-07-01T12:00:00.000Z"), now)).toBe(
       "expired",
     );
+  });
+});
+
+describe("humanizeCompact", () => {
+  const now = new Date("2026-07-10T12:00:00.000Z");
+
+  it("renders minutes", () => {
+    expect(humanizeCompact(new Date("2026-07-10T12:45:00.000Z"), now)).toBe("45m");
+  });
+
+  it("renders hours, flooring partial units", () => {
+    expect(humanizeCompact(new Date("2026-07-10T14:59:00.000Z"), now)).toBe("2h");
+  });
+
+  it("renders days", () => {
+    expect(humanizeCompact(new Date("2026-07-13T12:00:00.000Z"), now)).toBe("3d");
+  });
+
+  it("renders <1m under a minute", () => {
+    expect(humanizeCompact(new Date("2026-07-10T12:00:30.000Z"), now)).toBe("<1m");
+  });
+
+  it("renders <1m for a past instant", () => {
+    expect(humanizeCompact(new Date("2026-07-10T11:00:00.000Z"), now)).toBe("<1m");
   });
 });
