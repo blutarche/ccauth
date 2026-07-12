@@ -10,6 +10,7 @@ export const TEST_PATHS: Paths = {
   ccauthDir: "/home/tester/.claude/ccauth",
   profilesIndexPath: "/home/tester/.claude/ccauth/profiles.json",
   claudeConfigBackupPath: "/home/tester/.claude/ccauth/claude.json.bak",
+  claudeVersionCachePath: "/home/tester/.claude/ccauth/claude-version.json",
 };
 
 export interface TestHarness {
