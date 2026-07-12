@@ -24,14 +24,20 @@ export function parseOauthExpiry(blob: string): OauthExpiry {
 
 /**
  * Reads `claudeAiOauth.{accessToken,expiresAt}` for the `list --usage`
- * readout. Same never-throw contract as `parseOauthExpiry`.
+ * readout. Returns undefined when the blob isn't a Claude login at all
+ * (unparseable JSON or no `claudeAiOauth` object), so callers can tell
+ * "broken blob" from "valid login whose token fields are unusable"; within
+ * a valid blob, individual fields degrade to undefined. Never throws.
  */
-export function parseOauthAccessToken(blob: string): OauthAccessToken {
+export function parseOauthAccessToken(
+  blob: string,
+): OauthAccessToken | undefined {
   const oauth = readClaudeAiOauth(blob);
-  const token = oauth?.accessToken;
+  if (oauth === undefined) return undefined;
+  const token = oauth.accessToken;
   return {
     accessToken: typeof token === "string" && token !== "" ? token : undefined,
-    expiresAt: asFiniteNumber(oauth?.expiresAt),
+    expiresAt: asFiniteNumber(oauth.expiresAt),
   };
 }
 

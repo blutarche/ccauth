@@ -1,18 +1,12 @@
-import type {
-  Deps,
-  OauthAccount,
-  ProfilesIndex,
-  UsageFetchResult,
-  UsageWindow,
-} from "../types.js";
+import type { Deps, UsageFetchResult, UsageWindow } from "../types.js";
 import { AUTOSAVE_NAME, profileService } from "../types.js";
 import { readOauthAccount } from "../claudeConfig.js";
 import { readIndex } from "../profiles.js";
 import { sameAccount } from "../util/identity.js";
 import { humanizeAgo, humanizeCompact } from "../util/humanize.js";
 import { formatExpiryCell } from "../util/expiry.js";
+import type { OauthAccessToken } from "../util/oauthBlob.js";
 import { parseOauthAccessToken } from "../util/oauthBlob.js";
-import { validateCredentialBlob } from "../util/blob.js";
 
 export async function listCommand(
   deps: Deps,
@@ -30,17 +24,21 @@ export async function listCommand(
 
   const liveAccount = readOauthAccount(deps);
   const now = deps.now();
+  const activeNames = new Set(
+    names.filter((name) =>
+      sameAccount(index.profiles[name]?.oauthAccount, liveAccount),
+    ),
+  );
 
   const usage = opts.usage
-    ? await fetchUsageCells(deps, index, names, liveAccount, now)
+    ? await fetchUsageCells(deps, names, activeNames, now)
     : undefined;
 
   const rows = names.map((name) => {
     const entry = index.profiles[name]!;
-    const active = sameAccount(entry.oauthAccount, liveAccount);
     const cells = usage?.get(name);
     return {
-      name: active ? `* ${name}` : `  ${name}`,
+      name: activeNames.has(name) ? `* ${name}` : `  ${name}`,
       email: entry.email ?? "-",
       org: entry.org ?? "-",
       saved: humanizeAgo(new Date(entry.savedAt), now),
@@ -80,7 +78,7 @@ export async function listCommand(
     );
   }
 
-  if (rows.some((r) => r.fiveH === "stale")) {
+  if (rows.some((r) => r.fiveH === STALE_CELLS.fiveH)) {
     deps.stdout("");
     deps.stdout("stale: run `ccauth refresh` to update usage-readout tokens");
   }
@@ -102,9 +100,8 @@ const MISSING_CELLS: UsageCells = { fiveH: "-", week: "-" };
  */
 async function fetchUsageCells(
   deps: Deps,
-  index: ProfilesIndex,
   names: string[],
-  liveAccount: OauthAccount | undefined,
+  activeNames: ReadonlySet<string>,
   now: Date,
 ): Promise<Map<string, UsageCells>> {
   // The live slot's token, read lazily at most once: only an active row
@@ -115,7 +112,10 @@ async function fetchUsageCells(
     if (liveTokenMemo === undefined) {
       const blob = deps.store.read(deps.liveService);
       liveTokenMemo = {
-        token: blob === null ? undefined : freshAccessToken(blob, now),
+        token:
+          blob === null
+            ? undefined
+            : freshAccessToken(parseOauthAccessToken(blob), now),
       };
     }
     return liveTokenMemo.token;
@@ -125,23 +125,16 @@ async function fetchUsageCells(
     names.map(async (name): Promise<[string, UsageCells]> => {
       const blob = deps.store.read(profileService(name));
       if (blob === null) return [name, MISSING_CELLS];
-      try {
-        validateCredentialBlob(blob, name);
-      } catch {
-        // Not a Claude login at all -- same "no data" bucket as a missing
-        // blob. A VALID blob whose access token is merely unusable (empty,
-        // no expiry -- Claude Code sometimes stores exactly that) falls
-        // through to the stale path instead: `ccauth refresh` fixes it.
-        return [name, MISSING_CELLS];
-      }
+      const creds = parseOauthAccessToken(blob);
+      // Not a Claude login at all -- same "no data" bucket as a missing
+      // blob. A valid blob whose access token is merely unusable (empty,
+      // expired, no expiry -- Claude Code sometimes stores exactly that)
+      // falls through to the stale path instead: `ccauth refresh` fixes it.
+      if (creds === undefined) return [name, MISSING_CELLS];
 
-      const stored = parseOauthAccessToken(blob);
-      const storedFresh =
-        stored.accessToken !== undefined &&
-        stored.expiresAt !== undefined &&
-        stored.expiresAt > now.getTime();
-      const active = sameAccount(index.profiles[name]?.oauthAccount, liveAccount);
-      const token = storedFresh ? stored.accessToken : active ? liveToken() : undefined;
+      const token =
+        freshAccessToken(creds, now) ??
+        (activeNames.has(name) ? liveToken() : undefined);
       if (token === undefined) return [name, STALE_CELLS];
 
       return [name, toUsageCells(await deps.fetchUsage(token), now)];
@@ -150,11 +143,14 @@ async function fetchUsageCells(
   return new Map(entries);
 }
 
-function freshAccessToken(blob: string, now: Date): string | undefined {
-  const { accessToken, expiresAt } = parseOauthAccessToken(blob);
-  const fresh =
-    accessToken !== undefined && expiresAt !== undefined && expiresAt > now.getTime();
-  return fresh ? accessToken : undefined;
+function freshAccessToken(
+  creds: OauthAccessToken | undefined,
+  now: Date,
+): string | undefined {
+  if (creds?.accessToken === undefined || creds.expiresAt === undefined) {
+    return undefined;
+  }
+  return creds.expiresAt > now.getTime() ? creds.accessToken : undefined;
 }
 
 function toUsageCells(result: UsageFetchResult, now: Date): UsageCells {

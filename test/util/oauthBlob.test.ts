@@ -82,18 +82,12 @@ describe("parseOauthAccessToken", () => {
     });
   });
 
-  it("returns all-undefined for malformed JSON", () => {
-    expect(parseOauthAccessToken("not json")).toEqual({
-      accessToken: undefined,
-      expiresAt: undefined,
-    });
+  it("returns undefined for malformed JSON (not a Claude login)", () => {
+    expect(parseOauthAccessToken("not json")).toBeUndefined();
   });
 
-  it("returns all-undefined when claudeAiOauth is absent", () => {
-    expect(parseOauthAccessToken(JSON.stringify({ foo: 1 }))).toEqual({
-      accessToken: undefined,
-      expiresAt: undefined,
-    });
+  it("returns undefined when claudeAiOauth is absent (not a Claude login)", () => {
+    expect(parseOauthAccessToken(JSON.stringify({ foo: 1 }))).toBeUndefined();
   });
 
   it("drops a non-string or empty accessToken", () => {
