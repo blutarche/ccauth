@@ -50,11 +50,14 @@ export async function realFetchUsage(
 
 /**
  * Parses a usage response body. Readout path: never throws. Windows that are
- * absent or malformed degrade to `undefined` individually; only a body that
- * isn't an object at all is an `error`.
+ * absent or malformed degrade to `undefined` individually (a valid window in
+ * the same response is still shown); only a body that isn't a plain JSON
+ * object is an `error`.
  */
 export function parseUsageResponse(body: unknown): UsageFetchResult {
-  if (typeof body !== "object" || body === null) return { kind: "error" };
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return { kind: "error" };
+  }
   const root = body as Record<string, unknown>;
   return {
     kind: "ok",
@@ -92,11 +95,12 @@ function weeklyFromLimits(value: unknown): UsageWindow | undefined {
       scope?: unknown;
     };
     if (entry.group !== "weekly" && entry.kind !== "weekly") continue;
+    // Only an absent/null scope counts as the overall window. A scope in any
+    // unrecognized shape is treated as scoped (skipped), not as overall.
     const scope = entry.scope;
     if (
-      typeof scope === "object" &&
-      scope !== null &&
-      (scope as { model?: unknown }).model != null
+      scope != null &&
+      (typeof scope !== "object" || (scope as { model?: unknown }).model != null)
     ) {
       continue;
     }

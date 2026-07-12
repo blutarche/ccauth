@@ -376,7 +376,7 @@ describe("list --usage", () => {
     );
   });
 
-  it("clamps utilization above 100 to 0% remaining", async () => {
+  it("clamps out-of-range utilization to the 0-100% remaining range", async () => {
     const { deps, fs, store, fetchUsage, stdoutLines } = createTestDeps();
     fs.files.set(TEST_PATHS.claudeConfigPath, "{}");
     writeIndex(deps, { version: 1, profiles: { work: entry("w@x.com", "w-1") } });
@@ -384,7 +384,7 @@ describe("list --usage", () => {
     fetchUsage.responses.set("tok-w", {
       kind: "ok",
       fiveHour: { utilization: 130, resetsAt: undefined },
-      sevenDay: { utilization: 0, resetsAt: undefined },
+      sevenDay: { utilization: -25, resetsAt: undefined },
     });
 
     await listCommand(deps, { usage: true });
