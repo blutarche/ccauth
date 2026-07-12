@@ -1,3 +1,5 @@
+import { parseJsonObject } from "./blob.js";
+
 export interface OauthExpiry {
   expiresAt: number | undefined; // access token, ms epoch
   refreshTokenExpiresAt: number | undefined; // refresh token, ms epoch
@@ -42,20 +44,7 @@ export function parseOauthAccessToken(
 }
 
 function readClaudeAiOauth(blob: string): Record<string, unknown> | undefined {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(blob);
-  } catch {
-    return undefined;
-  }
-  if (
-    typeof parsed !== "object" ||
-    parsed === null ||
-    !("claudeAiOauth" in parsed)
-  ) {
-    return undefined;
-  }
-  const oauth = (parsed as { claudeAiOauth: unknown }).claudeAiOauth;
+  const oauth = parseJsonObject(blob)?.claudeAiOauth;
   if (typeof oauth !== "object" || oauth === null) {
     return undefined;
   }
