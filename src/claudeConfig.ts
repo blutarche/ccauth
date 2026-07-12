@@ -84,7 +84,7 @@ function detectIndent(raw: string): number | string {
   return ws.startsWith("\t") ? "\t" : ws.length;
 }
 
-export function ensureCcauthDir(deps: Deps): void {
+export function ensureCcauthDir(deps: Pick<Deps, "fs" | "paths">): void {
   const { fs, paths } = deps;
   if (!fs.existsSync(paths.ccauthDir)) {
     fs.mkdirSync(paths.ccauthDir);

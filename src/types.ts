@@ -42,7 +42,10 @@ export interface Paths {
 /** Raw identity metadata as it appears in `oauthAccount`. Opaque on purpose. */
 export type OauthAccount = Record<string, unknown>;
 
-/** One window from the OAuth usage endpoint. `utilization` is percent used (0-100). */
+/**
+ * One window from the OAuth usage endpoint. `utilization` is percent used
+ * as reported by the API (normally 0-100; rendering clamps to that range).
+ */
 export interface UsageWindow {
   utilization: number;
   /** Window reset time, ms epoch, when the API provided one. */

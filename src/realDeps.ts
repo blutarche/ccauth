@@ -5,7 +5,8 @@ import * as readline from "node:readline/promises";
 import { execFileSync } from "node:child_process";
 import type { Deps, FileSystem, Paths } from "./types.js";
 import { KeychainCredentialStore, computeLiveServiceName } from "./keychain.js";
-import { realFetchUsage, resolveClaudeCodeVersion } from "./usage.js";
+import { realFetchUsage } from "./usage.js";
+import { claudeCodeUserAgent, resolveClaudeCodeVersion } from "./claudeVersion.js";
 
 class RealFileSystem implements FileSystem {
   existsSync(p: string): boolean {
@@ -127,12 +128,9 @@ export function buildRealDeps(): Deps {
   // once per day across processes via the on-disk cache).
   let userAgentMemo: string | undefined;
   const userAgent = (): string =>
-    (userAgentMemo ??= `claude-code/${resolveClaudeCodeVersion({
-      fs,
-      paths,
-      runClaude: realRunClaude,
-      now,
-    })}`);
+    (userAgentMemo ??= claudeCodeUserAgent(
+      resolveClaudeCodeVersion({ fs, paths, runClaude: realRunClaude, now }),
+    ));
   return {
     store: new KeychainCredentialStore(),
     fs,
