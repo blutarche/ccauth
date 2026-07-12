@@ -173,7 +173,9 @@ function toUsageCells(result: UsageFetchResult, now: Date): UsageCells {
 /** `78% (2h)` = percent of the window remaining, reset horizon in parens. */
 function formatWindowCell(window: UsageWindow | undefined, now: Date): string {
   if (window === undefined) return "-";
-  const remaining = Math.max(0, 100 - Math.round(window.utilization));
+  // Two-sided clamp: the API shouldn't send utilization outside 0-100, but a
+  // percentage readout must never render outside that range regardless.
+  const remaining = Math.min(100, Math.max(0, 100 - Math.round(window.utilization)));
   if (window.resetsAt === undefined) return `${remaining}%`;
   return `${remaining}% (${humanizeCompact(new Date(window.resetsAt), now)})`;
 }

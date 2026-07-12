@@ -53,6 +53,15 @@ describe("parseUsageResponse", () => {
   it("returns error for a non-object body", () => {
     expect(parseUsageResponse(null)).toEqual({ kind: "error" });
     expect(parseUsageResponse("nope")).toEqual({ kind: "error" });
+    expect(parseUsageResponse([])).toEqual({ kind: "error" });
+  });
+
+  it("skips a weekly limits[] entry whose scope has an unrecognized shape", () => {
+    expect(
+      parseUsageResponse({
+        limits: [{ group: "weekly", percent: 80, scope: "opus" }],
+      }),
+    ).toEqual({ kind: "ok", fiveHour: undefined, sevenDay: undefined });
   });
 });
 
