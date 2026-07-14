@@ -97,15 +97,8 @@ function weeklyFromLimits(value: unknown): UsageWindow | undefined {
       scope?: unknown;
     };
     if (entry.group !== "weekly" && entry.kind !== "weekly") continue;
-    // Only an absent/null scope counts as the overall window. A scope in any
-    // unrecognized shape is treated as scoped (skipped), not as overall.
-    const scope = entry.scope;
-    if (
-      scope != null &&
-      (typeof scope !== "object" || (scope as { model?: unknown }).model != null)
-    ) {
-      continue;
-    }
+    // Only an absent/null scope is the overall window; any scope is narrower.
+    if (entry.scope != null) continue;
     if (typeof entry.percent !== "number" || !Number.isFinite(entry.percent)) {
       continue;
     }

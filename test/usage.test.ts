@@ -56,10 +56,13 @@ describe("parseUsageResponse", () => {
     expect(parseUsageResponse([])).toEqual({ kind: "error" });
   });
 
-  it("skips a weekly limits[] entry whose scope has an unrecognized shape", () => {
+  it("skips a weekly limits[] entry with any present scope", () => {
     expect(
       parseUsageResponse({
-        limits: [{ group: "weekly", percent: 80, scope: "opus" }],
+        limits: [
+          { group: "weekly", percent: 80, scope: "opus" },
+          { group: "weekly", percent: 70, scope: { organization: "org-1" } },
+        ],
       }),
     ).toEqual({ kind: "ok", fiveHour: undefined, sevenDay: undefined });
   });
