@@ -10,7 +10,8 @@ import { parseJsonObject } from "./util/blob.js";
 export const FALLBACK_CLAUDE_VERSION = "2.1.0";
 /** How long a detected `claude --version` result stays cached: 1 day. */
 const VERSION_CACHE_TTL_MS = 86_400_000;
-const VERSION_PROBE_TIMEOUT_MS = 10_000;
+/** Probe bound. It blocks the readout synchronously, so it stays tight. */
+const VERSION_PROBE_TIMEOUT_MS = 2_000;
 
 /** The seams version detection actually touches (a full `Deps` satisfies it). */
 export interface ClaudeVersionDeps {

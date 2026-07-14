@@ -23,7 +23,7 @@ describe("resolveClaudeCodeVersion", () => {
     expect(resolveClaudeCodeVersion(deps)).toBe("2.1.207");
 
     expect(runClaude.calls).toEqual([
-      { args: ["--version"], opts: { timeoutMs: 10_000 } },
+      { args: ["--version"], opts: { timeoutMs: 2_000 } },
     ]);
     expect(
       JSON.parse(fs.files.get(TEST_PATHS.claudeVersionCachePath)!),
