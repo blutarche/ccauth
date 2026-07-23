@@ -32,7 +32,19 @@ export async function useCommand(deps: Deps, name: string): Promise<void> {
   const liveBlob = deps.store.read(deps.liveService);
   const liveAccount = readOauthAccount(deps);
   let indexDirty = false;
-  if (liveBlob !== null) {
+  // Contagion guard: an EXPIRED live blob that is byte-identical to a stored
+  // profile adds no information (the same dead snapshot already exists under
+  // a name), while overwriting `_autosave` could destroy the only fresh copy
+  // of a different account. Expired-but-unique and fresh-but-duplicate blobs
+  // are still captured as before.
+  const skipAutosave =
+    liveBlob !== null &&
+    accessTokenExpired(liveBlob, deps.now()) &&
+    Object.keys(index.profiles).some(
+      (p) =>
+        p !== AUTOSAVE_NAME && deps.store.read(profileService(p)) === liveBlob,
+    );
+  if (liveBlob !== null && !skipAutosave) {
     deps.store.write(profileService(AUTOSAVE_NAME), liveBlob);
     const display = extractDisplayFields(liveAccount);
     index.profiles[AUTOSAVE_NAME] = {

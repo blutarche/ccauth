@@ -203,6 +203,71 @@ describe("use command", () => {
 
     expect(stderrLines.some((l) => /expired/i.test(l))).toBe(false);
   });
+
+  it("does not clobber _autosave with an expired live blob byte-equal to a stored profile", async () => {
+    const { deps, store, fs } = createTestDeps();
+
+    // _autosave currently holds the only fresh copy of some other account.
+    const freshOther = { claudeAiOauth: { accessToken: "fresh-other" } };
+    store.write(profileService(AUTOSAVE_NAME), JSON.stringify(freshOther));
+
+    // Live blob: expired AND byte-equal to saved profile "dead".
+    const deadBlob = {
+      claudeAiOauth: { accessToken: "dead", expiresAt: 1_000 },
+    };
+    seed(deps, store, fs, deadBlob, { email: "dead@x.com" });
+    store.write(profileService("dead"), JSON.stringify(deadBlob));
+    store.write(profileService("work"), JSON.stringify({ claudeAiOauth: {} }));
+    const index = readIndex(deps);
+    index.profiles["dead"] = {
+      email: "dead@x.com", org: undefined, accountUuid: "d-1",
+      savedAt: "2026-01-01T00:00:00.000Z",
+      oauthAccount: { accountUuid: "d-1", organizationUuid: "o-1" },
+    };
+    writeIndex(deps, index);
+
+    await useCommand(deps, "work");
+
+    // _autosave preserved -- the expired duplicate added nothing.
+    expect(store.read(profileService(AUTOSAVE_NAME))).toBe(
+      JSON.stringify(freshOther),
+    );
+    // Switch still happened.
+    expect(store.read(LIVE_SERVICE)).toBe(JSON.stringify({ claudeAiOauth: {} }));
+  });
+
+  it("still captures an expired live blob into _autosave when it is NOT stored anywhere", async () => {
+    const { deps, store, fs } = createTestDeps();
+    const expiredUnique = {
+      claudeAiOauth: { accessToken: "unique", expiresAt: 1_000 },
+    };
+    seed(deps, store, fs, expiredUnique, { email: "u@x.com" });
+    store.write(profileService("work"), JSON.stringify({ claudeAiOauth: {} }));
+
+    await useCommand(deps, "work");
+
+    // Expired but unique: might still be the only copy -- keep capturing it.
+    expect(store.read(profileService(AUTOSAVE_NAME))).toBe(
+      JSON.stringify(expiredUnique),
+    );
+  });
+
+  it("still captures a NON-expired live blob into _autosave even when byte-equal to a stored profile", async () => {
+    const { deps, store, fs } = createTestDeps();
+    const future = new Date("2026-07-10T12:00:00.000Z").getTime() + 3_600_000;
+    const liveDup = {
+      claudeAiOauth: { accessToken: "dup", expiresAt: future },
+    };
+    seed(deps, store, fs, liveDup, { email: "dup@x.com" });
+    store.write(profileService("dup"), JSON.stringify(liveDup));
+    store.write(profileService("work"), JSON.stringify({ claudeAiOauth: {} }));
+
+    await useCommand(deps, "work");
+
+    expect(store.read(profileService(AUTOSAVE_NAME))).toBe(
+      JSON.stringify(liveDup),
+    );
+  });
 });
 
 describe("use command - write-back on switch-away", () => {
