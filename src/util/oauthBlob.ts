@@ -54,3 +54,29 @@ function readClaudeAiOauth(blob: string): Record<string, unknown> | undefined {
 function asFiniteNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
+
+/**
+ * Whether a stored blob's access token is already past its expiry. Readout
+ * convention: a missing/unparseable `expiresAt` means "unknown", which is
+ * treated as NOT expired -- this predicate only ever adds warnings/guards,
+ * so unknown must never trigger them. Never throws.
+ */
+export function accessTokenExpired(blob: string, now: Date): boolean {
+  const expiresAt = parseOauthExpiry(blob).expiresAt;
+  return expiresAt !== undefined && expiresAt <= now.getTime();
+}
+
+/**
+ * Whether a blob carries BOTH an access token and a refresh token usable
+ * for propagation -- write-back needs a login that Claude Code can actually
+ * refresh, not just a live-looking access token. A blank/whitespace-only
+ * string counts as absent. Never throws.
+ */
+export function hasUsableTokens(blob: string): boolean {
+  const oauth = readClaudeAiOauth(blob);
+  return isNonBlankString(oauth?.accessToken) && isNonBlankString(oauth?.refreshToken);
+}
+
+function isNonBlankString(value: unknown): boolean {
+  return typeof value === "string" && value.trim() !== "";
+}

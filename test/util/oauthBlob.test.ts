@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { parseOauthExpiry, parseOauthAccessToken } from "../../src/util/oauthBlob.js";
+import {
+  parseOauthExpiry,
+  parseOauthAccessToken,
+  accessTokenExpired,
+  hasUsableTokens,
+} from "../../src/util/oauthBlob.js";
 
 describe("parseOauthExpiry", () => {
   it("parses a full valid blob", () => {
@@ -109,5 +114,70 @@ describe("parseOauthAccessToken", () => {
         JSON.stringify({ claudeAiOauth: { accessToken: "t", expiresAt: "soon" } }),
       ),
     ).toEqual({ accessToken: "t", expiresAt: undefined });
+  });
+});
+
+describe("accessTokenExpired", () => {
+  const now = new Date("2026-07-23T12:00:00.000Z"); // 1784894400000 ms
+
+  it("true when expiresAt is in the past", () => {
+    const blob = JSON.stringify({ claudeAiOauth: { expiresAt: now.getTime() - 1 } });
+    expect(accessTokenExpired(blob, now)).toBe(true);
+  });
+
+  it("true when expiresAt equals now (boundary counts as expired)", () => {
+    const blob = JSON.stringify({ claudeAiOauth: { expiresAt: now.getTime() } });
+    expect(accessTokenExpired(blob, now)).toBe(true);
+  });
+
+  it("false when expiresAt is in the future", () => {
+    const blob = JSON.stringify({ claudeAiOauth: { expiresAt: now.getTime() + 60_000 } });
+    expect(accessTokenExpired(blob, now)).toBe(false);
+  });
+
+  it("false when expiresAt is missing, non-numeric, or blob is malformed", () => {
+    expect(accessTokenExpired(JSON.stringify({ claudeAiOauth: {} }), now)).toBe(false);
+    expect(
+      accessTokenExpired(JSON.stringify({ claudeAiOauth: { expiresAt: "soon" } }), now),
+    ).toBe(false);
+    expect(accessTokenExpired("not json", now)).toBe(false);
+  });
+});
+
+describe("hasUsableTokens", () => {
+  it("true when both accessToken and refreshToken are non-blank strings", () => {
+    const blob = JSON.stringify({
+      claudeAiOauth: { accessToken: "sk-ant-oat01-x", refreshToken: "sk-ant-ort01-x" },
+    });
+    expect(hasUsableTokens(blob)).toBe(true);
+  });
+
+  it("false when refreshToken is missing", () => {
+    const blob = JSON.stringify({ claudeAiOauth: { accessToken: "sk-ant-oat01-x" } });
+    expect(hasUsableTokens(blob)).toBe(false);
+  });
+
+  it("false when accessToken is missing", () => {
+    const blob = JSON.stringify({ claudeAiOauth: { refreshToken: "sk-ant-ort01-x" } });
+    expect(hasUsableTokens(blob)).toBe(false);
+  });
+
+  it("false when accessToken is whitespace-only", () => {
+    const blob = JSON.stringify({
+      claudeAiOauth: { accessToken: "   ", refreshToken: "sk-ant-ort01-x" },
+    });
+    expect(hasUsableTokens(blob)).toBe(false);
+  });
+
+  it("false when refreshToken is whitespace-only", () => {
+    const blob = JSON.stringify({
+      claudeAiOauth: { accessToken: "sk-ant-oat01-x", refreshToken: "   " },
+    });
+    expect(hasUsableTokens(blob)).toBe(false);
+  });
+
+  it("false for malformed JSON or a blob with no claudeAiOauth", () => {
+    expect(hasUsableTokens("not json")).toBe(false);
+    expect(hasUsableTokens(JSON.stringify({ foo: 1 }))).toBe(false);
   });
 });
