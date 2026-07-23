@@ -544,7 +544,7 @@ describe("use command - write-back on switch-away", () => {
     expect(harness.store.read(LIVE_SERVICE)).toBe(JSON.stringify(dev2Blob));
   });
 
-  it("a keychain read failure for one unrelated profile does not abort the switch", async () => {
+  it("an unreadable profile skips BOTH autosave capture and write-back entirely, but the switch still completes", async () => {
     const harness = createTestDeps();
     seedTwoProfiles(harness);
     harness.store.write(profileService("dev-copy"), JSON.stringify(staleDevBlob));
@@ -555,22 +555,81 @@ describe("use command - write-back on switch-away", () => {
       oauthAccount: devAccount,
     };
     writeIndex(harness.deps, index);
-    // Reading "dev-copy"'s stored blob throws -- it must be skipped, not abort the switch.
+    // Reading "dev-copy"'s stored blob throws -- an unreadable profile could
+    // conceal a split-brain pairing, so the whole capture/write-back run is
+    // treated as unknown state and skipped, not just this one profile.
     harness.store.failReadsFor.add(profileService("dev-copy"));
 
     await useCommand(harness.deps, "dev2");
     harness.store.failReadsFor.delete(profileService("dev-copy"));
 
-    // "dev-copy" was skipped (its read failed) -- untouched.
+    // _autosave was never seeded and capture was skipped -- still absent.
+    expect(harness.store.read(profileService(AUTOSAVE_NAME))).toBeNull();
+    // "dev" (same identity as live -- would normally be upgraded) untouched.
+    expect(harness.store.read(profileService("dev"))).toBe(
+      JSON.stringify(staleDevBlob),
+    );
+    // "dev-copy" itself untouched too.
     expect(harness.store.read(profileService("dev-copy"))).toBe(
       JSON.stringify(staleDevBlob),
     );
-    // "dev" (an unaffected profile) still upgraded normally.
+    // Switch still completed.
+    expect(harness.store.read(LIVE_SERVICE)).toBe(JSON.stringify(dev2Blob));
+    expect(harness.stderrLines.some((l) => l.includes("dev-copy"))).toBe(true);
+  });
+
+  it("treats an unreadable profile as unknown state even when it actually conceals a split-brain pairing", async () => {
+    const harness = createTestDeps();
+    seedTwoProfiles(harness);
+    // _autosave currently holds a fresh copy of some other account.
+    const freshOther = {
+      claudeAiOauth: { accessToken: "fresh-other", refreshToken: "other-refresh" },
+    };
+    harness.store.write(profileService(AUTOSAVE_NAME), JSON.stringify(freshOther));
+    // "dev-copy" secretly holds a blob byte-equal to the live blob, tagged
+    // under an identity that does NOT match live -- if this read succeeded,
+    // it would trip the split-brain guard. Instead its read throws, so the
+    // code can't see the mismatch directly; it must still refuse to guess.
+    harness.store.write(profileService("dev-copy"), JSON.stringify(freshDevBlob));
+    const index = readIndex(harness.deps);
+    index.profiles["dev-copy"] = {
+      email: "other@x.com", org: undefined, accountUuid: "other-1",
+      savedAt: "2026-01-01T00:00:00.000Z",
+      oauthAccount: { accountUuid: "other-1", organizationUuid: "o-9" },
+    };
+    writeIndex(harness.deps, index);
+    harness.store.failReadsFor.add(profileService("dev-copy"));
+
+    await useCommand(harness.deps, "dev2");
+    harness.store.failReadsFor.delete(profileService("dev-copy"));
+
+    // _autosave untouched -- capture was skipped entirely.
+    expect(harness.store.read(profileService(AUTOSAVE_NAME))).toBe(
+      JSON.stringify(freshOther),
+    );
+    // "dev" was NOT overwritten either.
+    expect(harness.store.read(profileService("dev"))).toBe(
+      JSON.stringify(staleDevBlob),
+    );
+    // Switch itself still completed.
+    expect(harness.store.read(LIVE_SERVICE)).toBe(JSON.stringify(dev2Blob));
+  });
+
+  it("never re-reads the target's own service when scanning stored profiles", async () => {
+    const harness = createTestDeps();
+    seedTwoProfiles(harness);
+
+    await useCommand(harness.deps, "dev"); // dev is live AND the target
+
+    // Exactly one read of "dev"'s service -- the already-validated read at
+    // the top of the command. The stored-blobs scan must reuse that value
+    // instead of reading the same service again.
+    expect(harness.store.readCounts.get(profileService("dev"))).toBe(1);
+    // Write-back/restore logic still saw the real (superseding) live blob.
     expect(harness.store.read(profileService("dev"))).toBe(
       JSON.stringify(freshDevBlob),
     );
-    // Switch still completed.
-    expect(harness.store.read(LIVE_SERVICE)).toBe(JSON.stringify(dev2Blob));
+    expect(harness.store.read(LIVE_SERVICE)).toBe(JSON.stringify(freshDevBlob));
   });
 
   it("a keychain write failure for one profile does not abort write-back for others or the switch", async () => {

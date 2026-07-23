@@ -42,18 +42,35 @@ export async function useCommand(deps: Deps, name: string): Promise<void> {
   // write-back loop, instead of re-reading the same keychain service three
   // times over.
   const storedBlobs = new Map<string, string | null>();
+  // The TARGET's own blob was already read (and validated) above -- reuse
+  // `targetRaw` here instead of reading its keychain service again. This
+  // drops one redundant read AND means a transient second read can never
+  // disagree with the blob this command has already committed to restoring.
+  storedBlobs.set(name, targetRaw);
+  const unreadable: string[] = [];
   for (const profileName of Object.keys(index.profiles)) {
-    if (profileName === AUTOSAVE_NAME) continue;
-    let storedBlob: string | null;
+    if (profileName === AUTOSAVE_NAME || profileName === name) continue;
     try {
-      storedBlob = deps.store.read(profileService(profileName));
+      storedBlobs.set(profileName, deps.store.read(profileService(profileName)));
     } catch {
-      deps.stderr(
-        `  ⚠  Failed to read stored credentials for profile "${profileName}" -- skipping.`,
-      );
-      storedBlob = null;
+      unreadable.push(profileName);
     }
-    storedBlobs.set(profileName, storedBlob);
+  }
+  // An unreadable profile is UNKNOWN state, not "absent" -- it could be
+  // hiding a blob byte-equal to the live one under a mismatched identity
+  // (concealed split-brain), which the guards below can only catch by
+  // actually reading it. So a read failure anywhere skips BOTH the
+  // `_autosave` capture and the whole write-back block for this run rather
+  // than just the one profile: guessing wrong in either direction could
+  // propagate one account's credentials onto another's profiles. The
+  // requested switch itself still proceeds.
+  if (unreadable.length > 0) {
+    deps.stderr(
+      `  ⚠  Could not read stored credentials for: ${unreadable.join(", ")} -- ` +
+        `treating as unknown state (an unreadable profile could hide a mismatched ` +
+        `identity). Skipping auto-snapshot and write-back for this switch; run ` +
+        `\`ccauth save <name>\` afterward if you need the current login kept.`,
+    );
   }
 
   // Split-brain guard: if some named profile's stored blob is already
@@ -68,6 +85,7 @@ export async function useCommand(deps: Deps, name: string): Promise<void> {
   // record garbage and could destroy the only fresh copy of a different
   // account already sitting there).
   const splitBrain =
+    unreadable.length === 0 &&
     liveBlob !== null &&
     Object.entries(index.profiles).some(
       ([p, entry]) =>
@@ -85,6 +103,7 @@ export async function useCommand(deps: Deps, name: string): Promise<void> {
   // fresh-but-duplicate blobs of the SAME identity are still captured as
   // before.
   const skipAutosave =
+    unreadable.length > 0 ||
     splitBrain ||
     (liveBlob !== null &&
       accessTokenExpired(liveBlob, deps.now()) &&
@@ -127,6 +146,7 @@ export async function useCommand(deps: Deps, name: string): Promise<void> {
   // snapshot is still the right thing to restore.
   const supersededByLive = new Set<string>();
   if (
+    unreadable.length === 0 &&
     !splitBrain &&
     liveBlob !== null &&
     isValidBlob(liveBlob) &&
