@@ -29,8 +29,10 @@ function asString(value: unknown): string | undefined {
  * Whether two logins are the same account *in the same org/workspace*. A
  * Claude account keeps one `accountUuid` across all its orgs, so matching on
  * that alone marks every profile for the same person active at once -- the
- * `organizationUuid` disambiguates the workspace. Both uuids must be present
- * and equal; a login with no identity never matches anything.
+ * `organizationUuid` disambiguates the workspace. `accountUuid` must be
+ * present and equal; `organizationUuid` must be strictly equal, including
+ * both sides undefined -- an org-less personal login saved under two names
+ * is still the same login.
  */
 export function sameAccount(
   a: OauthAccount | undefined,

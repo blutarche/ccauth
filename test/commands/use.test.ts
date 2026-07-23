@@ -204,18 +204,21 @@ describe("use command", () => {
     expect(stderrLines.some((l) => /expired/i.test(l))).toBe(false);
   });
 
-  it("does not clobber _autosave with an expired live blob byte-equal to a stored profile", async () => {
+  it("does not clobber _autosave with an expired live blob byte-equal to a stored profile of the SAME identity", async () => {
     const { deps, store, fs } = createTestDeps();
 
     // _autosave currently holds the only fresh copy of some other account.
     const freshOther = { claudeAiOauth: { accessToken: "fresh-other" } };
     store.write(profileService(AUTOSAVE_NAME), JSON.stringify(freshOther));
 
-    // Live blob: expired AND byte-equal to saved profile "dead".
+    // Live blob: expired AND byte-equal to saved profile "dead", same identity.
     const deadBlob = {
       claudeAiOauth: { accessToken: "dead", expiresAt: 1_000 },
     };
-    seed(deps, store, fs, deadBlob, { email: "dead@x.com" });
+    seed(deps, store, fs, deadBlob, {
+      accountUuid: "d-1",
+      organizationUuid: "o-1",
+    });
     store.write(profileService("dead"), JSON.stringify(deadBlob));
     store.write(profileService("work"), JSON.stringify({ claudeAiOauth: {} }));
     const index = readIndex(deps);
@@ -234,6 +237,33 @@ describe("use command", () => {
     );
     // Switch still happened.
     expect(store.read(LIVE_SERVICE)).toBe(JSON.stringify({ claudeAiOauth: {} }));
+  });
+
+  it("still captures _autosave when the byte-equal stored profile's identity does NOT match the live identity", async () => {
+    const { deps, store, fs } = createTestDeps();
+
+    // Live blob: expired AND byte-equal to saved profile "dead", but the
+    // live identity in ~/.claude.json does not match "dead"'s saved identity
+    // -- the pairing isn't captured anywhere else, so it must still be saved.
+    const deadBlob = {
+      claudeAiOauth: { accessToken: "dead", expiresAt: 1_000 },
+    };
+    seed(deps, store, fs, deadBlob, { accountUuid: "other-1" });
+    store.write(profileService("dead"), JSON.stringify(deadBlob));
+    store.write(profileService("work"), JSON.stringify({ claudeAiOauth: {} }));
+    const index = readIndex(deps);
+    index.profiles["dead"] = {
+      email: "dead@x.com", org: undefined, accountUuid: "d-1",
+      savedAt: "2026-01-01T00:00:00.000Z",
+      oauthAccount: { accountUuid: "d-1", organizationUuid: "o-1" },
+    };
+    writeIndex(deps, index);
+
+    await useCommand(deps, "work");
+
+    expect(store.read(profileService(AUTOSAVE_NAME))).toBe(
+      JSON.stringify(deadBlob),
+    );
   });
 
   it("still captures an expired live blob into _autosave when it is NOT stored anywhere", async () => {
@@ -363,7 +393,7 @@ describe("use command - write-back on switch-away", () => {
     );
   });
 
-  it("promotes when the stored blob lacks refreshTokenExpiresAt but live has one", async () => {
+  it("skips write-back when the stored blob lacks refreshTokenExpiresAt (unknown age, never downgrade)", async () => {
     const harness = createTestDeps();
     seedTwoProfiles(harness);
     const noRteStored = { claudeAiOauth: { accessToken: "dev-ancient" } };
@@ -372,7 +402,7 @@ describe("use command - write-back on switch-away", () => {
     await useCommand(harness.deps, "dev2");
 
     expect(harness.store.read(profileService("dev"))).toBe(
-      JSON.stringify(freshDevBlob),
+      JSON.stringify(noRteStored),
     );
   });
 
@@ -451,6 +481,85 @@ describe("use command - write-back on switch-away", () => {
     // _autosave still captured exactly once with the live blob (existing behavior).
     expect(harness.store.read(profileService(AUTOSAVE_NAME))).toBe(
       JSON.stringify(freshDevBlob),
+    );
+  });
+
+  it("skips write-back when the live blob has no usable access token", async () => {
+    const harness = createTestDeps();
+    seedTwoProfiles(harness);
+    harness.store.write(
+      LIVE_SERVICE,
+      JSON.stringify({ claudeAiOauth: { refreshTokenExpiresAt: 9_999_999_999_999 } }),
+    );
+
+    await useCommand(harness.deps, "dev2");
+
+    expect(harness.store.read(profileService("dev"))).toBe(
+      JSON.stringify(staleDevBlob),
+    );
+    // Switch itself still happened.
+    expect(harness.store.read(LIVE_SERVICE)).toBe(JSON.stringify(dev2Blob));
+  });
+
+  it("a keychain write failure for one profile does not abort write-back for others or the switch", async () => {
+    const harness = createTestDeps();
+    seedTwoProfiles(harness);
+    harness.store.write(profileService("dev-copy"), JSON.stringify(staleDevBlob));
+    const index = readIndex(harness.deps);
+    index.profiles["dev-copy"] = {
+      email: "dev@x.com", org: undefined, accountUuid: "a-1",
+      savedAt: "2026-01-01T00:00:00.000Z", refreshTokenExpiresAt: 1_000,
+      oauthAccount: devAccount,
+    };
+    writeIndex(harness.deps, index);
+    harness.store.failWritesFor.add(profileService("dev"));
+
+    await useCommand(harness.deps, "dev2");
+
+    // "dev" write-back failed and was skipped, warned on stderr.
+    expect(harness.store.read(profileService("dev"))).toBe(
+      JSON.stringify(staleDevBlob),
+    );
+    expect(harness.stderrLines.some((l) => l.includes("dev"))).toBe(true);
+    // "dev-copy" (same identity) still upgraded.
+    expect(harness.store.read(profileService("dev-copy"))).toBe(
+      JSON.stringify(freshDevBlob),
+    );
+    // Switch still completed.
+    expect(harness.store.read(LIVE_SERVICE)).toBe(JSON.stringify(dev2Blob));
+  });
+
+  it("skips the entire write-back block when a byte-equal stored blob belongs to a different identity (split-brain)", async () => {
+    const harness = createTestDeps();
+    seedTwoProfiles(harness);
+    // Live blob is byte-equal to dev2's stored blob, but ~/.claude.json
+    // still claims the live identity is "dev" -- a previous switch must
+    // have crashed between the keychain write and the config swap.
+    harness.store.write(LIVE_SERVICE, JSON.stringify(dev2Blob));
+
+    await useCommand(harness.deps, "dev2");
+
+    // "dev"'s stale snapshot is NOT overwritten with dev2's blob.
+    expect(harness.store.read(profileService("dev"))).toBe(
+      JSON.stringify(staleDevBlob),
+    );
+  });
+
+  it("reconciles a stale index refreshTokenExpiresAt when the stored blob already matches the live blob", async () => {
+    const harness = createTestDeps();
+    seedTwoProfiles(harness);
+    // "dev"'s stored blob already equals the live blob (a previous run's
+    // keychain write landed but its writeIndex step failed), yet the index
+    // still shows the old refreshTokenExpiresAt.
+    harness.store.write(profileService("dev"), JSON.stringify(freshDevBlob));
+
+    await useCommand(harness.deps, "dev2");
+
+    expect(harness.store.read(profileService("dev"))).toBe(
+      JSON.stringify(freshDevBlob),
+    );
+    expect(readIndex(harness.deps).profiles["dev"]?.refreshTokenExpiresAt).toBe(
+      2_000,
     );
   });
 });
