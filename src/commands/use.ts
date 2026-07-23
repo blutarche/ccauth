@@ -38,14 +38,11 @@ export async function useCommand(deps: Deps, name: string): Promise<void> {
   let indexDirty = false;
 
   // One read pass over every named (non-_autosave) profile's stored blob --
-  // reused below for the autosave guard, the split-brain guard, and the
-  // write-back loop, instead of re-reading the same keychain service three
-  // times over.
+  // shared by the autosave guard, the split-brain guard, and the write-back
+  // loop. The target is seeded from the validated `targetRaw` read above,
+  // never re-read: a transient second read must not be able to disagree with
+  // the blob this command has already committed to restoring.
   const storedBlobs = new Map<string, string | null>();
-  // The TARGET's own blob was already read (and validated) above -- reuse
-  // `targetRaw` here instead of reading its keychain service again. This
-  // drops one redundant read AND means a transient second read can never
-  // disagree with the blob this command has already committed to restoring.
   storedBlobs.set(name, targetRaw);
   const unreadable: string[] = [];
   for (const profileName of Object.keys(index.profiles)) {
@@ -98,11 +95,9 @@ export async function useCommand(deps: Deps, name: string): Promise<void> {
   // Contagion guard: an EXPIRED live blob that is byte-identical to a stored
   // profile of the SAME identity adds no information (the same dead snapshot
   // already exists under a name), while overwriting `_autosave` could destroy
-  // the only fresh copy of a different account. A byte-equal blob under a
-  // mismatched identity (split-brain) is handled above -- it never reaches
-  // this guard's "still captures" fallback. Expired-but-unique and
-  // fresh-but-duplicate blobs of the SAME identity are still captured as
-  // before.
+  // the only fresh copy of a different account. Expired-but-unique and
+  // fresh-but-duplicate blobs of the same identity are still captured;
+  // byte-equal under a mismatched identity is the split-brain case above.
   const skipAutosave =
     unreadable.length > 0 ||
     splitBrain ||
@@ -194,12 +189,12 @@ export async function useCommand(deps: Deps, name: string): Promise<void> {
     writeIndex(deps, index);
   }
 
-  // If the write-back just superseded the TARGET itself (switching to a
-  // profile of the currently-live account), restore the fresh live blob --
-  // reinstating the pre-upgrade `targetRaw` here would recreate the exact
-  // stale-token restore this command is fixing. Keyed off `supersededByLive`
-  // rather than a successful persist, so a keychain failure on the target's
-  // own write-back never demotes the restore back to the stale snapshot.
+  // If the live blob superseded the TARGET itself (switching to a profile of
+  // the currently-live account), restore the live blob -- reinstating the
+  // stale `targetRaw` would resurrect a consumed refresh token. Keyed off
+  // `supersededByLive` rather than a successful persist, so a keychain
+  // failure on the target's own write-back never demotes the restore back to
+  // the stale snapshot.
   const restoreRaw =
     supersededByLive.has(name) && liveBlob !== null ? liveBlob : targetRaw;
 
