@@ -576,6 +576,11 @@ describe("use command - write-back on switch-away", () => {
     // Switch still completed.
     expect(harness.store.read(LIVE_SERVICE)).toBe(JSON.stringify(dev2Blob));
     expect(harness.stderrLines.some((l) => l.includes("dev-copy"))).toBe(true);
+    // The warning must not prescribe a post-switch `ccauth save` -- by then
+    // live holds the NEW login, so saving would capture the wrong account.
+    const warning = harness.stderrLines.find((l) => l.includes("dev-copy"))!;
+    expect(warning).not.toMatch(/ccauth save/);
+    expect(warning).toMatch(/NOT being captured/);
   });
 
   it("treats an unreadable profile as unknown state even when it actually conceals a split-brain pairing", async () => {

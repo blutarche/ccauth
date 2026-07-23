@@ -68,8 +68,9 @@ export async function useCommand(deps: Deps, name: string): Promise<void> {
     deps.stderr(
       `  ⚠  Could not read stored credentials for: ${unreadable.join(", ")} -- ` +
         `treating as unknown state (an unreadable profile could hide a mismatched ` +
-        `identity). Skipping auto-snapshot and write-back for this switch; run ` +
-        `\`ccauth save <name>\` afterward if you need the current login kept.`,
+        `identity). Skipping auto-snapshot and write-back for this switch -- the ` +
+        `outgoing login is NOT being captured and may be unrecoverable after the ` +
+        `switch unless it is already saved under a profile.`,
     );
   }
 
