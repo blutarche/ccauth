@@ -3,6 +3,7 @@ import {
   parseOauthExpiry,
   parseOauthAccessToken,
   accessTokenExpired,
+  hasUsableTokens,
 } from "../../src/util/oauthBlob.js";
 
 describe("parseOauthExpiry", () => {
@@ -140,5 +141,43 @@ describe("accessTokenExpired", () => {
       accessTokenExpired(JSON.stringify({ claudeAiOauth: { expiresAt: "soon" } }), now),
     ).toBe(false);
     expect(accessTokenExpired("not json", now)).toBe(false);
+  });
+});
+
+describe("hasUsableTokens", () => {
+  it("true when both accessToken and refreshToken are non-blank strings", () => {
+    const blob = JSON.stringify({
+      claudeAiOauth: { accessToken: "sk-ant-oat01-x", refreshToken: "sk-ant-ort01-x" },
+    });
+    expect(hasUsableTokens(blob)).toBe(true);
+  });
+
+  it("false when refreshToken is missing", () => {
+    const blob = JSON.stringify({ claudeAiOauth: { accessToken: "sk-ant-oat01-x" } });
+    expect(hasUsableTokens(blob)).toBe(false);
+  });
+
+  it("false when accessToken is missing", () => {
+    const blob = JSON.stringify({ claudeAiOauth: { refreshToken: "sk-ant-ort01-x" } });
+    expect(hasUsableTokens(blob)).toBe(false);
+  });
+
+  it("false when accessToken is whitespace-only", () => {
+    const blob = JSON.stringify({
+      claudeAiOauth: { accessToken: "   ", refreshToken: "sk-ant-ort01-x" },
+    });
+    expect(hasUsableTokens(blob)).toBe(false);
+  });
+
+  it("false when refreshToken is whitespace-only", () => {
+    const blob = JSON.stringify({
+      claudeAiOauth: { accessToken: "sk-ant-oat01-x", refreshToken: "   " },
+    });
+    expect(hasUsableTokens(blob)).toBe(false);
+  });
+
+  it("false for malformed JSON or a blob with no claudeAiOauth", () => {
+    expect(hasUsableTokens("not json")).toBe(false);
+    expect(hasUsableTokens(JSON.stringify({ foo: 1 }))).toBe(false);
   });
 });

@@ -7,7 +7,7 @@ import { extractDisplayFields, sameAccount } from "../util/identity.js";
 import { validateCredentialBlob } from "../util/blob.js";
 import {
   accessTokenExpired,
-  parseOauthAccessToken,
+  hasUsableTokens,
   parseOauthExpiry,
 } from "../util/oauthBlob.js";
 
@@ -44,25 +44,56 @@ export async function useCommand(deps: Deps, name: string): Promise<void> {
   const storedBlobs = new Map<string, string | null>();
   for (const profileName of Object.keys(index.profiles)) {
     if (profileName === AUTOSAVE_NAME) continue;
-    storedBlobs.set(profileName, deps.store.read(profileService(profileName)));
+    let storedBlob: string | null;
+    try {
+      storedBlob = deps.store.read(profileService(profileName));
+    } catch {
+      deps.stderr(
+        `  ⚠  Failed to read stored credentials for profile "${profileName}" -- skipping.`,
+      );
+      storedBlob = null;
+    }
+    storedBlobs.set(profileName, storedBlob);
   }
+
+  // Split-brain guard: if some named profile's stored blob is already
+  // byte-equal to the live blob but that profile's saved identity does NOT
+  // match the live identity in ~/.claude.json, the live blob provably
+  // belongs to a different login than the config claims -- config/keychain
+  // can diverge if a previous switch crashed between the keychain write and
+  // the config swap. A blob's tokens belong to one login, so this pairing is
+  // inconsistent: it must not be written back into any profile (would
+  // overwrite every profile of that identity with another account's
+  // credentials) AND must not be captured into `_autosave` either (would
+  // record garbage and could destroy the only fresh copy of a different
+  // account already sitting there).
+  const splitBrain =
+    liveBlob !== null &&
+    Object.entries(index.profiles).some(
+      ([p, entry]) =>
+        p !== AUTOSAVE_NAME &&
+        storedBlobs.get(p) === liveBlob &&
+        !sameAccount(liveAccount, entry.oauthAccount),
+    );
 
   // Contagion guard: an EXPIRED live blob that is byte-identical to a stored
   // profile of the SAME identity adds no information (the same dead snapshot
   // already exists under a name), while overwriting `_autosave` could destroy
   // the only fresh copy of a different account. A byte-equal blob under a
-  // mismatched identity is not redundant -- it's the only place that pairing
-  // is captured, so it must still be saved. Expired-but-unique and
-  // fresh-but-duplicate blobs are still captured as before.
+  // mismatched identity (split-brain) is handled above -- it never reaches
+  // this guard's "still captures" fallback. Expired-but-unique and
+  // fresh-but-duplicate blobs of the SAME identity are still captured as
+  // before.
   const skipAutosave =
-    liveBlob !== null &&
-    accessTokenExpired(liveBlob, deps.now()) &&
-    Object.entries(index.profiles).some(
-      ([p, entry]) =>
-        p !== AUTOSAVE_NAME &&
-        storedBlobs.get(p) === liveBlob &&
-        sameAccount(liveAccount, entry.oauthAccount),
-    );
+    splitBrain ||
+    (liveBlob !== null &&
+      accessTokenExpired(liveBlob, deps.now()) &&
+      Object.entries(index.profiles).some(
+        ([p, entry]) =>
+          p !== AUTOSAVE_NAME &&
+          storedBlobs.get(p) === liveBlob &&
+          sameAccount(liveAccount, entry.oauthAccount),
+      ));
   if (liveBlob !== null && !skipAutosave) {
     deps.store.write(profileService(AUTOSAVE_NAME), liveBlob);
     const display = extractDisplayFields(liveAccount);
@@ -77,38 +108,29 @@ export async function useCommand(deps: Deps, name: string): Promise<void> {
     indexDirty = true;
   }
 
-  // Split-brain guard: if some named profile's stored blob is already
-  // byte-equal to the live blob but that profile's saved identity does NOT
-  // match the live identity in ~/.claude.json, the live blob provably
-  // belongs to a different login than the config claims -- config/keychain
-  // can diverge if a previous switch crashed between the keychain write and
-  // the config swap. Propagating under the wrong identity would overwrite
-  // every profile of that identity with another account's credentials, so
-  // skip write-back entirely rather than risk it.
-  const splitBrain =
-    liveBlob !== null &&
-    Object.entries(index.profiles).some(
-      ([p, entry]) =>
-        p !== AUTOSAVE_NAME &&
-        storedBlobs.get(p) === liveBlob &&
-        !sameAccount(liveAccount, entry.oauthAccount),
-    );
-
   // (b) Write the live blob BACK into every saved profile for this same
   // account+org whose snapshot it supersedes. Claude Code rotates refresh
   // tokens (effectively single-use), so a snapshot frozen at `save` time
   // dies the first time its token is consumed -- without this, switching
   // away strands the only fresh copy in `_autosave`, which the next `use`
   // clobbers. Gated forward-only: a live blob that is invalid, identity-less,
-  // missing a usable access token, byte-equal, or not provably fresher
-  // (refreshTokenExpiresAt moves on every rotation, and an unknown stored age
-  // is never provably older) never touches a snapshot.
-  const upgraded = new Set<string>();
+  // missing a usable access+refresh token pair (propagation must land a
+  // login Claude Code can actually refresh), byte-equal, or not provably
+  // fresher (refreshTokenExpiresAt moves on every rotation, and an unknown
+  // stored age is never provably older) never touches a snapshot.
+  //
+  // `supersededByLive` tracks profiles the live blob has PROVABLY superseded
+  // (all freshness gates passed), regardless of whether persisting that
+  // write-back actually succeeds. The restore decision below keys off this,
+  // not off a successful keychain write -- a keychain failure on the
+  // write-back is a persistence problem, not evidence that the stale
+  // snapshot is still the right thing to restore.
+  const supersededByLive = new Set<string>();
   if (
     !splitBrain &&
     liveBlob !== null &&
     isValidBlob(liveBlob) &&
-    parseOauthAccessToken(liveBlob)?.accessToken !== undefined
+    hasUsableTokens(liveBlob)
   ) {
     const liveRte = parseOauthExpiry(liveBlob).refreshTokenExpiresAt;
     if (liveRte !== undefined) {
@@ -130,6 +152,7 @@ export async function useCommand(deps: Deps, name: string): Promise<void> {
         const storedRte = parseOauthExpiry(storedBlob).refreshTokenExpiresAt;
         if (storedRte === undefined) continue; // unknown age, never risk a downgrade
         if (liveRte <= storedRte) continue;
+        supersededByLive.add(profileName);
         try {
           deps.store.write(profileService(profileName), liveBlob);
           index.profiles[profileName] = {
@@ -137,7 +160,6 @@ export async function useCommand(deps: Deps, name: string): Promise<void> {
             savedAt: deps.now().toISOString(),
             refreshTokenExpiresAt: liveRte,
           };
-          upgraded.add(profileName);
           indexDirty = true;
         } catch {
           deps.stderr(
@@ -151,11 +173,14 @@ export async function useCommand(deps: Deps, name: string): Promise<void> {
     writeIndex(deps, index);
   }
 
-  // If the write-back just upgraded the TARGET itself (switching to a
+  // If the write-back just superseded the TARGET itself (switching to a
   // profile of the currently-live account), restore the fresh live blob --
   // reinstating the pre-upgrade `targetRaw` here would recreate the exact
-  // stale-token restore this command is fixing.
-  const restoreRaw = upgraded.has(name) && liveBlob !== null ? liveBlob : targetRaw;
+  // stale-token restore this command is fixing. Keyed off `supersededByLive`
+  // rather than a successful persist, so a keychain failure on the target's
+  // own write-back never demotes the restore back to the stale snapshot.
+  const restoreRaw =
+    supersededByLive.has(name) && liveBlob !== null ? liveBlob : targetRaw;
 
   // (c) Keychain write first...
   deps.store.write(deps.liveService, restoreRaw);

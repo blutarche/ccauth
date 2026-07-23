@@ -239,17 +239,22 @@ describe("use command", () => {
     expect(store.read(LIVE_SERVICE)).toBe(JSON.stringify({ claudeAiOauth: {} }));
   });
 
-  it("still captures _autosave when the byte-equal stored profile's identity does NOT match the live identity", async () => {
+  it("preserves _autosave (split-brain) when the byte-equal stored profile's identity does NOT match the live identity", async () => {
     const { deps, store, fs } = createTestDeps();
 
-    // Live blob: expired AND byte-equal to saved profile "dead", but the
-    // live identity in ~/.claude.json does not match "dead"'s saved identity
-    // -- the pairing isn't captured anywhere else, so it must still be saved.
+    // _autosave currently holds a fresh copy of a THIRD account (C).
+    const freshC = { claudeAiOauth: { accessToken: "fresh-c" } };
+    store.write(profileService(AUTOSAVE_NAME), JSON.stringify(freshC));
+
+    // Live blob is byte-equal to saved profile "dead" (identity B), but the
+    // live identity in ~/.claude.json is a different identity (A) -- a
+    // blob's tokens belong to one login, so this pairing is inconsistent
+    // (split-brain) and must not be captured into _autosave either.
     const deadBlob = {
       claudeAiOauth: { accessToken: "dead", expiresAt: 1_000 },
     };
-    seed(deps, store, fs, deadBlob, { accountUuid: "other-1" });
-    store.write(profileService("dead"), JSON.stringify(deadBlob));
+    seed(deps, store, fs, deadBlob, { accountUuid: "other-1" }); // identity A
+    store.write(profileService("dead"), JSON.stringify(deadBlob)); // identity B
     store.write(profileService("work"), JSON.stringify({ claudeAiOauth: {} }));
     const index = readIndex(deps);
     index.profiles["dead"] = {
@@ -261,8 +266,9 @@ describe("use command", () => {
 
     await useCommand(deps, "work");
 
+    // _autosave still holds C -- the split-brain live blob was never captured.
     expect(store.read(profileService(AUTOSAVE_NAME))).toBe(
-      JSON.stringify(deadBlob),
+      JSON.stringify(freshC),
     );
   });
 
@@ -305,13 +311,25 @@ describe("use command - write-back on switch-away", () => {
   const devAccount = { accountUuid: "a-1", organizationUuid: "o-1", emailAddress: "dev@x.com" };
   const dev2Account = { accountUuid: "a-2", organizationUuid: "o-1", emailAddress: "dev2@x.com" };
   const staleDevBlob = {
-    claudeAiOauth: { accessToken: "dev-old", refreshTokenExpiresAt: 1_000 },
+    claudeAiOauth: {
+      accessToken: "dev-old",
+      refreshToken: "dev-refresh",
+      refreshTokenExpiresAt: 1_000,
+    },
   };
   const freshDevBlob = {
-    claudeAiOauth: { accessToken: "dev-new", refreshTokenExpiresAt: 2_000 },
+    claudeAiOauth: {
+      accessToken: "dev-new",
+      refreshToken: "dev-refresh",
+      refreshTokenExpiresAt: 2_000,
+    },
   };
   const dev2Blob = {
-    claudeAiOauth: { accessToken: "dev2-tok", refreshTokenExpiresAt: 5_000 },
+    claudeAiOauth: {
+      accessToken: "dev2-tok",
+      refreshToken: "dev2-refresh",
+      refreshTokenExpiresAt: 5_000,
+    },
   };
 
   function seedTwoProfiles(harness: ReturnType<typeof createTestDeps>) {
@@ -364,7 +382,11 @@ describe("use command - write-back on switch-away", () => {
     seedTwoProfiles(harness);
     // Live blob is OLDER than the snapshot (e.g. restored-then-never-rotated).
     const olderLive = {
-      claudeAiOauth: { accessToken: "dev-older", refreshTokenExpiresAt: 500 },
+      claudeAiOauth: {
+        accessToken: "dev-older",
+        refreshToken: "dev-refresh",
+        refreshTokenExpiresAt: 500,
+      },
     };
     harness.store.write(LIVE_SERVICE, JSON.stringify(olderLive));
 
@@ -383,7 +405,9 @@ describe("use command - write-back on switch-away", () => {
     seedTwoProfiles(harness);
     harness.store.write(
       LIVE_SERVICE,
-      JSON.stringify({ claudeAiOauth: { accessToken: "dev-mystery" } }),
+      JSON.stringify({
+        claudeAiOauth: { accessToken: "dev-mystery", refreshToken: "dev-refresh" },
+      }),
     );
 
     await useCommand(harness.deps, "dev2");
@@ -472,6 +496,25 @@ describe("use command - write-back on switch-away", () => {
     expect(harness.store.read(LIVE_SERVICE)).toBe(JSON.stringify(freshDevBlob));
   });
 
+  it("restores the LIVE blob (not the stale snapshot) even when the target's own write-back write fails", async () => {
+    const harness = createTestDeps();
+    seedTwoProfiles(harness);
+    harness.store.failWritesFor.add(profileService("dev"));
+
+    await useCommand(harness.deps, "dev"); // dev is live AND the target
+
+    // The write-back write to "dev" failed and was skipped -- the stored
+    // snapshot is untouched.
+    expect(harness.store.read(profileService("dev"))).toBe(
+      JSON.stringify(staleDevBlob),
+    );
+    // But the restore decision doesn't depend on that write's success: the
+    // live slot still ends up with the fresher LIVE blob, never the stale
+    // snapshot that was just proven superseded.
+    expect(harness.store.read(LIVE_SERVICE)).toBe(JSON.stringify(freshDevBlob));
+    expect(harness.stderrLines.some((l) => l.includes("dev"))).toBe(true);
+  });
+
   it("never writes the live blob back into _autosave via the write-back path twice", async () => {
     const harness = createTestDeps();
     seedTwoProfiles(harness);
@@ -498,6 +541,35 @@ describe("use command - write-back on switch-away", () => {
       JSON.stringify(staleDevBlob),
     );
     // Switch itself still happened.
+    expect(harness.store.read(LIVE_SERVICE)).toBe(JSON.stringify(dev2Blob));
+  });
+
+  it("a keychain read failure for one unrelated profile does not abort the switch", async () => {
+    const harness = createTestDeps();
+    seedTwoProfiles(harness);
+    harness.store.write(profileService("dev-copy"), JSON.stringify(staleDevBlob));
+    const index = readIndex(harness.deps);
+    index.profiles["dev-copy"] = {
+      email: "dev@x.com", org: undefined, accountUuid: "a-1",
+      savedAt: "2026-01-01T00:00:00.000Z", refreshTokenExpiresAt: 1_000,
+      oauthAccount: devAccount,
+    };
+    writeIndex(harness.deps, index);
+    // Reading "dev-copy"'s stored blob throws -- it must be skipped, not abort the switch.
+    harness.store.failReadsFor.add(profileService("dev-copy"));
+
+    await useCommand(harness.deps, "dev2");
+    harness.store.failReadsFor.delete(profileService("dev-copy"));
+
+    // "dev-copy" was skipped (its read failed) -- untouched.
+    expect(harness.store.read(profileService("dev-copy"))).toBe(
+      JSON.stringify(staleDevBlob),
+    );
+    // "dev" (an unaffected profile) still upgraded normally.
+    expect(harness.store.read(profileService("dev"))).toBe(
+      JSON.stringify(freshDevBlob),
+    );
+    // Switch still completed.
     expect(harness.store.read(LIVE_SERVICE)).toBe(JSON.stringify(dev2Blob));
   });
 

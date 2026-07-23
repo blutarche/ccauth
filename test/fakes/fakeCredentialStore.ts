@@ -5,8 +5,13 @@ export class FakeCredentialStore implements CredentialStore {
   readonly items = new Map<string, string>();
   /** Services whose next write() throws, to simulate a keychain failure. */
   readonly failWritesFor = new Set<string>();
+  /** Services whose next read() throws, to simulate a keychain failure. */
+  readonly failReadsFor = new Set<string>();
 
   read(service: string): string | null {
+    if (this.failReadsFor.has(service)) {
+      throw new Error(`fake keychain read failure for "${service}"`);
+    }
     return this.items.has(service) ? this.items.get(service)! : null;
   }
 

@@ -65,3 +65,18 @@ export function accessTokenExpired(blob: string, now: Date): boolean {
   const expiresAt = parseOauthExpiry(blob).expiresAt;
   return expiresAt !== undefined && expiresAt <= now.getTime();
 }
+
+/**
+ * Whether a blob carries BOTH an access token and a refresh token usable
+ * for propagation -- write-back needs a login that Claude Code can actually
+ * refresh, not just a live-looking access token. A blank/whitespace-only
+ * string counts as absent. Never throws.
+ */
+export function hasUsableTokens(blob: string): boolean {
+  const oauth = readClaudeAiOauth(blob);
+  return isNonBlankString(oauth?.accessToken) && isNonBlankString(oauth?.refreshToken);
+}
+
+function isNonBlankString(value: unknown): boolean {
+  return typeof value === "string" && value.trim() !== "";
+}
