@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { parseOauthExpiry, parseOauthAccessToken } from "../../src/util/oauthBlob.js";
+import {
+  parseOauthExpiry,
+  parseOauthAccessToken,
+  accessTokenExpired,
+} from "../../src/util/oauthBlob.js";
 
 describe("parseOauthExpiry", () => {
   it("parses a full valid blob", () => {
@@ -109,5 +113,32 @@ describe("parseOauthAccessToken", () => {
         JSON.stringify({ claudeAiOauth: { accessToken: "t", expiresAt: "soon" } }),
       ),
     ).toEqual({ accessToken: "t", expiresAt: undefined });
+  });
+});
+
+describe("accessTokenExpired", () => {
+  const now = new Date("2026-07-23T12:00:00.000Z"); // 1784894400000 ms
+
+  it("true when expiresAt is in the past", () => {
+    const blob = JSON.stringify({ claudeAiOauth: { expiresAt: now.getTime() - 1 } });
+    expect(accessTokenExpired(blob, now)).toBe(true);
+  });
+
+  it("true when expiresAt equals now (boundary counts as expired)", () => {
+    const blob = JSON.stringify({ claudeAiOauth: { expiresAt: now.getTime() } });
+    expect(accessTokenExpired(blob, now)).toBe(true);
+  });
+
+  it("false when expiresAt is in the future", () => {
+    const blob = JSON.stringify({ claudeAiOauth: { expiresAt: now.getTime() + 60_000 } });
+    expect(accessTokenExpired(blob, now)).toBe(false);
+  });
+
+  it("false when expiresAt is missing, non-numeric, or blob is malformed", () => {
+    expect(accessTokenExpired(JSON.stringify({ claudeAiOauth: {} }), now)).toBe(false);
+    expect(
+      accessTokenExpired(JSON.stringify({ claudeAiOauth: { expiresAt: "soon" } }), now),
+    ).toBe(false);
+    expect(accessTokenExpired("not json", now)).toBe(false);
   });
 });
