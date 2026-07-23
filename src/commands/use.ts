@@ -3,7 +3,7 @@ import { AUTOSAVE_NAME, CcauthError, profileService } from "../types.js";
 import { readOauthAccount, writeOauthAccount } from "../claudeConfig.js";
 import { readIndex, writeIndex } from "../profiles.js";
 import { validateName } from "../util/names.js";
-import { extractDisplayFields } from "../util/identity.js";
+import { extractDisplayFields, sameAccount } from "../util/identity.js";
 import { validateCredentialBlob } from "../util/blob.js";
 import { parseOauthExpiry } from "../util/oauthBlob.js";
 
@@ -31,6 +31,7 @@ export async function useCommand(deps: Deps, name: string): Promise<void> {
   // stored snapshot, since refresh tokens rotate (see design doc §8).
   const liveBlob = deps.store.read(deps.liveService);
   const liveAccount = readOauthAccount(deps);
+  let indexDirty = false;
   if (liveBlob !== null) {
     deps.store.write(profileService(AUTOSAVE_NAME), liveBlob);
     const display = extractDisplayFields(liveAccount);
@@ -42,11 +43,51 @@ export async function useCommand(deps: Deps, name: string): Promise<void> {
       refreshTokenExpiresAt: parseOauthExpiry(liveBlob).refreshTokenExpiresAt,
       oauthAccount: liveAccount,
     };
+    indexDirty = true;
+  }
+
+  // (b) Write the live blob BACK into every saved profile for this same
+  // account+org whose snapshot it supersedes. Claude Code rotates refresh
+  // tokens (effectively single-use), so a snapshot frozen at `save` time
+  // dies the first time its token is consumed -- without this, switching
+  // away strands the only fresh copy in `_autosave`, which the next `use`
+  // clobbers. Gated forward-only: a live blob that is invalid, identity-less,
+  // byte-equal, or not provably fresher (refreshTokenExpiresAt moves on
+  // every rotation) never touches a snapshot.
+  const upgraded = new Set<string>();
+  if (liveBlob !== null && isValidBlob(liveBlob)) {
+    const liveRte = parseOauthExpiry(liveBlob).refreshTokenExpiresAt;
+    if (liveRte !== undefined) {
+      for (const [profileName, entry] of Object.entries(index.profiles)) {
+        if (profileName === AUTOSAVE_NAME) continue;
+        if (!sameAccount(liveAccount, entry.oauthAccount)) continue;
+        const storedBlob = deps.store.read(profileService(profileName));
+        if (storedBlob === null || storedBlob === liveBlob) continue;
+        const storedRte = parseOauthExpiry(storedBlob).refreshTokenExpiresAt;
+        if (storedRte !== undefined && liveRte <= storedRte) continue;
+        deps.store.write(profileService(profileName), liveBlob);
+        index.profiles[profileName] = {
+          ...entry,
+          savedAt: deps.now().toISOString(),
+          refreshTokenExpiresAt: liveRte,
+        };
+        upgraded.add(profileName);
+        indexDirty = true;
+      }
+    }
+  }
+  if (indexDirty) {
     writeIndex(deps, index);
   }
 
+  // If the write-back just upgraded the TARGET itself (switching to a
+  // profile of the currently-live account), restore the fresh live blob --
+  // reinstating the pre-upgrade `targetRaw` here would recreate the exact
+  // stale-token restore this command is fixing.
+  const restoreRaw = upgraded.has(name) && liveBlob !== null ? liveBlob : targetRaw;
+
   // (c) Keychain write first...
-  deps.store.write(deps.liveService, targetRaw);
+  deps.store.write(deps.liveService, restoreRaw);
   // (d) ...then the config swap.
   writeOauthAccount(deps, targetEntry?.oauthAccount);
 
@@ -60,5 +101,16 @@ export async function useCommand(deps: Deps, name: string): Promise<void> {
     deps.stderr(
       "  ⚠  `claude` is running — restart it for a clean switch.",
     );
+  }
+}
+
+/** True when the blob passes structural validation. Write-back is best-effort,
+ * so a broken live blob must skip it silently, never abort the switch. */
+function isValidBlob(blob: string): boolean {
+  try {
+    validateCredentialBlob(blob, "live");
+    return true;
+  } catch {
+    return false;
   }
 }

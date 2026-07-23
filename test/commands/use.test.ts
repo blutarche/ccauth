@@ -168,3 +168,188 @@ describe("use command", () => {
     );
   });
 });
+
+describe("use command - write-back on switch-away", () => {
+  // Common fixture: live login is "dev" (rotated past its snapshot), target is "dev2".
+  const devAccount = { accountUuid: "a-1", organizationUuid: "o-1", emailAddress: "dev@x.com" };
+  const dev2Account = { accountUuid: "a-2", organizationUuid: "o-1", emailAddress: "dev2@x.com" };
+  const staleDevBlob = {
+    claudeAiOauth: { accessToken: "dev-old", refreshTokenExpiresAt: 1_000 },
+  };
+  const freshDevBlob = {
+    claudeAiOauth: { accessToken: "dev-new", refreshTokenExpiresAt: 2_000 },
+  };
+  const dev2Blob = {
+    claudeAiOauth: { accessToken: "dev2-tok", refreshTokenExpiresAt: 5_000 },
+  };
+
+  function seedTwoProfiles(harness: ReturnType<typeof createTestDeps>) {
+    const { deps, store, fs } = harness;
+    // Live slot: dev, already rotated ahead of its snapshot.
+    store.write(LIVE_SERVICE, JSON.stringify(freshDevBlob));
+    fs.files.set(
+      TEST_PATHS.claudeConfigPath,
+      JSON.stringify({ oauthAccount: devAccount }),
+    );
+    // Saved profiles: dev (stale) and dev2.
+    store.write(profileService("dev"), JSON.stringify(staleDevBlob));
+    store.write(profileService("dev2"), JSON.stringify(dev2Blob));
+    const index = readIndex(deps);
+    index.profiles["dev"] = {
+      email: "dev@x.com", org: undefined, accountUuid: "a-1",
+      savedAt: "2026-01-01T00:00:00.000Z", refreshTokenExpiresAt: 1_000,
+      oauthAccount: devAccount,
+    };
+    index.profiles["dev2"] = {
+      email: "dev2@x.com", org: undefined, accountUuid: "a-2",
+      savedAt: "2026-01-01T00:00:00.000Z", refreshTokenExpiresAt: 5_000,
+      oauthAccount: dev2Account,
+    };
+    writeIndex(deps, index);
+  }
+
+  it("writes the fresher live blob back into the identity-matching profile", async () => {
+    const harness = createTestDeps();
+    seedTwoProfiles(harness);
+
+    await useCommand(harness.deps, "dev2");
+
+    expect(harness.store.read(profileService("dev"))).toBe(
+      JSON.stringify(freshDevBlob),
+    );
+    const index = readIndex(harness.deps);
+    expect(index.profiles["dev"]?.refreshTokenExpiresAt).toBe(2_000);
+    expect(index.profiles["dev"]?.savedAt).toBe("2026-07-10T12:00:00.000Z");
+    // dev2 (different identity) untouched.
+    expect(harness.store.read(profileService("dev2"))).toBe(
+      JSON.stringify(dev2Blob),
+    );
+    // Switch itself still happened normally.
+    expect(harness.store.read(LIVE_SERVICE)).toBe(JSON.stringify(dev2Blob));
+  });
+
+  it("never downgrades: live refreshTokenExpiresAt not strictly newer -> no write-back", async () => {
+    const harness = createTestDeps();
+    seedTwoProfiles(harness);
+    // Live blob is OLDER than the snapshot (e.g. restored-then-never-rotated).
+    const olderLive = {
+      claudeAiOauth: { accessToken: "dev-older", refreshTokenExpiresAt: 500 },
+    };
+    harness.store.write(LIVE_SERVICE, JSON.stringify(olderLive));
+
+    await useCommand(harness.deps, "dev2");
+
+    expect(harness.store.read(profileService("dev"))).toBe(
+      JSON.stringify(staleDevBlob),
+    );
+    expect(readIndex(harness.deps).profiles["dev"]?.savedAt).toBe(
+      "2026-01-01T00:00:00.000Z",
+    );
+  });
+
+  it("skips write-back when the live blob has no refreshTokenExpiresAt (can't prove freshness)", async () => {
+    const harness = createTestDeps();
+    seedTwoProfiles(harness);
+    harness.store.write(
+      LIVE_SERVICE,
+      JSON.stringify({ claudeAiOauth: { accessToken: "dev-mystery" } }),
+    );
+
+    await useCommand(harness.deps, "dev2");
+
+    expect(harness.store.read(profileService("dev"))).toBe(
+      JSON.stringify(staleDevBlob),
+    );
+  });
+
+  it("promotes when the stored blob lacks refreshTokenExpiresAt but live has one", async () => {
+    const harness = createTestDeps();
+    seedTwoProfiles(harness);
+    const noRteStored = { claudeAiOauth: { accessToken: "dev-ancient" } };
+    harness.store.write(profileService("dev"), JSON.stringify(noRteStored));
+
+    await useCommand(harness.deps, "dev2");
+
+    expect(harness.store.read(profileService("dev"))).toBe(
+      JSON.stringify(freshDevBlob),
+    );
+  });
+
+  it("skips write-back when live identity is missing either uuid", async () => {
+    const harness = createTestDeps();
+    seedTwoProfiles(harness);
+    harness.fs.files.set(
+      TEST_PATHS.claudeConfigPath,
+      JSON.stringify({ oauthAccount: { accountUuid: "a-1" } }), // no organizationUuid
+    );
+
+    await useCommand(harness.deps, "dev2");
+
+    expect(harness.store.read(profileService("dev"))).toBe(
+      JSON.stringify(staleDevBlob),
+    );
+  });
+
+  it("skips write-back (but still switches) when the live blob is structurally invalid", async () => {
+    const harness = createTestDeps();
+    seedTwoProfiles(harness);
+    harness.store.write(LIVE_SERVICE, JSON.stringify({ notClaudeAiOauth: true }));
+
+    await useCommand(harness.deps, "dev2");
+
+    expect(harness.store.read(profileService("dev"))).toBe(
+      JSON.stringify(staleDevBlob),
+    );
+    expect(harness.store.read(LIVE_SERVICE)).toBe(JSON.stringify(dev2Blob));
+  });
+
+  it("writes back into ALL profiles sharing the live account+org", async () => {
+    const harness = createTestDeps();
+    seedTwoProfiles(harness);
+    // A second name for the same dev identity, also stale.
+    harness.store.write(profileService("dev-copy"), JSON.stringify(staleDevBlob));
+    const index = readIndex(harness.deps);
+    index.profiles["dev-copy"] = {
+      email: "dev@x.com", org: undefined, accountUuid: "a-1",
+      savedAt: "2026-01-01T00:00:00.000Z", refreshTokenExpiresAt: 1_000,
+      oauthAccount: devAccount,
+    };
+    writeIndex(harness.deps, index);
+
+    await useCommand(harness.deps, "dev2");
+
+    expect(harness.store.read(profileService("dev"))).toBe(
+      JSON.stringify(freshDevBlob),
+    );
+    expect(harness.store.read(profileService("dev-copy"))).toBe(
+      JSON.stringify(freshDevBlob),
+    );
+  });
+
+  it("switching to a profile of the LIVE account restores the upgraded blob, not the stale snapshot", async () => {
+    const harness = createTestDeps();
+    seedTwoProfiles(harness);
+
+    await useCommand(harness.deps, "dev"); // dev is live AND the target
+
+    // Store upgraded...
+    expect(harness.store.read(profileService("dev"))).toBe(
+      JSON.stringify(freshDevBlob),
+    );
+    // ...and the live slot keeps the FRESH blob -- restoring staleDevBlob
+    // here would be the original bug in miniature.
+    expect(harness.store.read(LIVE_SERVICE)).toBe(JSON.stringify(freshDevBlob));
+  });
+
+  it("never writes the live blob back into _autosave via the write-back path twice", async () => {
+    const harness = createTestDeps();
+    seedTwoProfiles(harness);
+
+    await useCommand(harness.deps, "dev2");
+
+    // _autosave still captured exactly once with the live blob (existing behavior).
+    expect(harness.store.read(profileService(AUTOSAVE_NAME))).toBe(
+      JSON.stringify(freshDevBlob),
+    );
+  });
+});
