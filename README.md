@@ -63,6 +63,7 @@ Claude Code keeps its OAuth credentials in the macOS Keychain and the account id
 Details that matter:
 
 - `use` auto-snapshots the current login to `_autosave` first, so a switch is always undoable: `ccauth use _autosave`.
+- On every switch, `ccauth use` also writes the live (freshest) credentials back into any saved profile for the same account and org, so snapshots track token rotation instead of dying after one restore. It warns when the profile being restored looks stale (expired access token), and it never overwrites `_autosave` with an expired copy of a blob that is already saved under a name.
 - The `~/.claude.json` swap is atomic, with a one-time `.bak` on first write.
 - Tokens are moved as opaque blobs — `ccauth` itself never decodes them or touches the network. Expired profile? Claude Code refreshes it on next launch, same as always. The one exception: `ccauth list --usage` uses each stored access token for a single read-only usage query against Anthropic's API - nothing is written or refreshed.
 - `ccauth refresh` warms a stored profile by swapping it live and running one throwaway `claude -p`, letting the genuine Claude Code client refresh and rotate its own token; `ccauth` re-captures the result and restores your original login. It can't extend a refresh token past its ~30-day login window — only a real `/login` resets that — so it's a "make a stale-but-not-dead profile just work" convenience, not a keep-alive.
