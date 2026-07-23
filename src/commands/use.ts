@@ -5,7 +5,7 @@ import { readIndex, writeIndex } from "../profiles.js";
 import { validateName } from "../util/names.js";
 import { extractDisplayFields, sameAccount } from "../util/identity.js";
 import { validateCredentialBlob } from "../util/blob.js";
-import { parseOauthExpiry } from "../util/oauthBlob.js";
+import { accessTokenExpired, parseOauthExpiry } from "../util/oauthBlob.js";
 
 export async function useCommand(deps: Deps, name: string): Promise<void> {
   validateName(name, { allowReserved: true });
@@ -92,6 +92,13 @@ export async function useCommand(deps: Deps, name: string): Promise<void> {
   writeOauthAccount(deps, targetEntry?.oauthAccount);
 
   deps.stdout(`Switched to profile "${name}".`);
+  if (accessTokenExpired(restoreRaw, deps.now())) {
+    deps.stderr(
+      `  ⚠  "${name}"'s snapshot is stale (access token expired) -- Claude Code ` +
+        `will try to refresh it. If you end up logged out, run /login there, ` +
+        `then \`ccauth save ${name}\`.`,
+    );
+  }
   if (!targetEntry?.oauthAccount) {
     deps.stdout(
       "Note: no saved identity for this profile -- the displayed account in Claude Code was cleared.",

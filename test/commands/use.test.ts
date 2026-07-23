@@ -167,6 +167,42 @@ describe("use command", () => {
       987654321,
     );
   });
+
+  it("warns on stderr when the target snapshot's access token is already expired", async () => {
+    const { deps, store, fs, stderrLines } = createTestDeps();
+    seed(deps, store, fs, { claudeAiOauth: {} }, { email: "me@personal.com" });
+    store.write(
+      profileService("work"),
+      JSON.stringify({
+        claudeAiOauth: { accessToken: "t", expiresAt: 1_000 }, // long past
+      }),
+    );
+
+    await useCommand(deps, "work");
+
+    expect(stderrLines.some((l) => /expired/i.test(l))).toBe(true);
+    // Non-blocking: the switch still happened.
+    expect(store.read(LIVE_SERVICE)).toContain("claudeAiOauth");
+  });
+
+  it("does not warn when the target snapshot's access token is still valid or unknown", async () => {
+    const { deps, store, fs, stderrLines } = createTestDeps();
+    seed(deps, store, fs, { claudeAiOauth: {} }, { email: "me@personal.com" });
+    const future = new Date("2026-07-10T12:00:00.000Z").getTime() + 3_600_000;
+    store.write(
+      profileService("work"),
+      JSON.stringify({ claudeAiOauth: { accessToken: "t", expiresAt: future } }),
+    );
+    store.write(
+      profileService("mystery"),
+      JSON.stringify({ claudeAiOauth: { accessToken: "t" } }), // no expiresAt
+    );
+
+    await useCommand(deps, "work");
+    await useCommand(deps, "mystery");
+
+    expect(stderrLines.some((l) => /expired/i.test(l))).toBe(false);
+  });
 });
 
 describe("use command - write-back on switch-away", () => {
