@@ -1,6 +1,6 @@
 {
   "name": "@blutarche/ccauth",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Snapshot and switch between multiple Claude Code CLI account logins on macOS.",
   "type": "module",
   "bin": {
